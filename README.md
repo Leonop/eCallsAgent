@@ -1,29 +1,17 @@
-# eCallsAgent is an advanced natural language processing (NLP) tool leveraging BERTopic modeling, and fine-tuned by ChatGPT 4-o, to extract fundamental narratives from earnings call transcripts. Designed for financial analysts, researchers, and data scientists, it identifies key business topics and tracks their evolution over time, offering insights into corporate performance and strategy. With future potential for integration into large language models (LLMs) using chain-of-thought reasoning, eCallsAgent is a cutting-edge solution for deep reseach in financial fundamental narratives and context analysis.
+# eCallsAgent
 
-@todo:
-- [ ] Add more tests
-- [ ] Add more documentation
-- [ ] Add more examples
-- [ ] Add more features
-- [ ] Add more evaluation metrics
-- [ ] Add more visualization
-- [ ] Add more analysis
-- [ ] Add more research
-- [ ] Add more application
-- [ ] Add more integration
+## Description
+eCallsAgent is an advanced natural language processing (NLP) tool leveraging BERTopic modeling and fine-tuned by ChatGPT 4.0 to extract fundamental narratives from earnings call transcripts. Designed for financial analysts, researchers, and data scientists, it identifies key business topics and tracks their evolution over time, offering insights into corporate performance and strategy. With future potential for integration into large language models (LLMs) using chain-of-thought reasoning, eCallsAgent is a cutting-edge solution for deep research in financial fundamental narratives and context analysis.
 
-
-# Developer:
-- Name: Dr. Zicheng Xiao
-- Title: Quantitative Researcher / Assistant Professor in Finance|FinTech
-- Afflication: University of Arkansas, Fayetteville
-- Paper: Measuring Information Quality by Using Topic Attention Divergence: Evidence from Earnings Calls (Tentative)
-- Date: 2025-02-21
-- Version: 0.1.0
-- License: No license is granted for use, reproduction, modification, or distribution, including for research, commercial, or personal purposes, without explicit written permission from [Dr. Zicheng Xiao]. Contact [zicheng.xiao@gmail.com] for inquiries
-- Email: zicheng.xiao@gmail.com
-- GitHub: [https://github.com/zichengxiao]
-- LinkedIn: [https://www.linkedin.com/in/zichengxiao/]
+## Developer Information
+- **Name:** Dr. Zicheng Xiao
+- **Title:** Quantitative Researcher / Assistant Professor in Finance|FinTech
+- **Affiliation:** University of Arkansas, Fayetteville
+- **Research:** Measuring Information Quality by Using Topic Attention Divergence: Evidence from Earnings Calls (Tentative)
+- **Contact:** zicheng.xiao@gmail.com
+- **Links:** 
+  - [GitHub](https://github.com/zichengxiao)
+  - [LinkedIn](https://www.linkedin.com/in/zichengxiao/)
 
 Copyright (c) [Zicheng Xiao] 2025. All rights reserved.
 This project is publicly visible for viewing only. No permission is granted to use, copy, modify, or distribute this code for any purpose, including research, without explicit written consent from the author.
@@ -45,46 +33,10 @@ Developed by Dr.Zicheng Xiao,  Quantitative Researcher, this tool is shared publ
 - Comprehensive evaluation metrics for model performance
 - Pre-defined business-specific seed topics for enhanced topic coherence
 
-eCallsAgent/
-├── README.md                  # Project documentation
-├── setup.sh                   # Setup script for environment configuration
-├── settings.py                # Configuration settings
-├── requirements.txt           # Python dependencies
-├── .gitignore                 # Files to ignore in version control
-├── input_data/                # Data directory
-│   ├── raw/                   # Raw input data
-│   │   └── eCallsAgent.csv    # Original earnings call data
-│   ├── processed/             # Processed data
-│   │   └── preprocessed_docs.txt  # Preprocessed documents
-│   ├── interim/               # Intermediate data
-│   │   └── embeddings/        # Generated embeddings
-│   └── external/              # External data
-│       └── stoplist.csv       # Stop words list
-├── eCallsAgent/               # Core package
-│   ├── __init__.py            # Package initialization
-│   ├── config/                # Configuration modules
-│   │   ├── __init__.py
-│   │   └── global_options.py  # Global settings
-│   ├── core/                  # Core functionality
-│   │   ├── __init__.py
-│   │   ├── data_handler.py    # Data loading and preprocessing
-│   │   ├── embedding_generator.py  # Embedding creation
-│   │   └── topic_modeler.py   # Topic modeling logic
-│   ├── utils/                 # Utility functions
-│   │   ├── __init__.py
-│   │   ├── cuda_setup.py      # GPU setup utilities
-│   │   ├── logging_utils.py   # Logging support
-│   │   └── visualization.py   # Visualization tools
-│   └── main.py                # Entry point for the tool
-└── tests/                     # Unit tests
-    ├── __init__.py
-    ├── test_data_handler.py    # Tests for data handling
-    ├── test_embedding_generator.py  # Tests for embeddings
-    └── test_topic_modeler.py   # Tests for topic modeling
-
+## Project Structure
 
 Getting Started
-Currently, eCallsAgent is a demonstration project and not available for direct use due to copyright restrictions. However, here’s how it’s structured for potential future access:
+Currently, eCallsAgent is a demonstration project and not available for direct use due to copyright restrictions. However, here's how it's structured for potential future access:
 
 Prerequisites
 Python 3.8+
@@ -136,7 +88,7 @@ Why eCallsAgent?
 Earnings calls are critical for understanding corporate narratives, yet their unstructured nature makes analysis challenging. eCallsAgent bridges this gap with state-of-the-art NLP, offering a glimpse into how AI can revolutionize financial research—if permitted for use in the future.
 
 Contributing
-Contributions are not accepted at this stage due to the project’s restrictive copyright. However, feedback or inquiries are welcome via email.
+Contributions are not accepted at this stage due to the project's restrictive copyright. However, feedback or inquiries are welcome via email.
 
 Acknowledgments
 Built with BERTopic for topic modeling.
