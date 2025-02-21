@@ -1,0 +1,68 @@
+# Add these specific paths
+eCallsAgent/output/
+eCallsAgent/output/temp/
+eCallsAgent/output/temp/*.mmap
+*.mmap
+output/
+output/temp/
+output/temp/*.mmap
+input_data/*
+
+# Keep existing entries
+input_data/
+*.log
+*.csv
+*.json
+*.npz
+__pycache__/
+
+# Large files and temporary data
+output/temp/*.mmap
+output/temp/*.npz
+output/temp/*.pkl
+*.mmap
+*.npz
+
+# Python
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Logs
+*.log
+output/log_files/
+logs/
+*.err
+
+# Environment
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
