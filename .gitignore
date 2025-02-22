@@ -6,7 +6,7 @@ eCallsAgent/output/temp/*.mmap
 output/
 output/temp/
 output/temp/*.mmap
-input_data/*
+eCallsAgent/input_data/*
 
 # Keep existing entries
 input_data/

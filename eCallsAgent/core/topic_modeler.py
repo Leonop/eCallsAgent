@@ -29,6 +29,18 @@ class TopicModeler:
     """Wraps topic modeling components and handles training and saving of results."""
     def __init__(self, device: str):
         self.device = device
+        # Create necessary directories at initialization
+        self.output_dirs = {
+            'temp': os.path.join(gl.output_folder, 'temp'),
+            'models': os.path.join(gl.output_folder, 'models'),
+            'embeddings': os.path.join(gl.output_folder, 'temp', 'embeddings'),
+            'figures': os.path.join(gl.output_folder, 'figures')
+        }
+        
+        # Create all required directories
+        for dir_path in self.output_dirs.values():
+            os.makedirs(dir_path, exist_ok=True)
+        
         # Use EmbeddingGenerator to set base batch size
         embedding_gen = EmbeddingGenerator(device)
         self.base_batch_size = embedding_gen.base_batch_size
@@ -177,6 +189,51 @@ class TopicModeler:
         logger.info(f"Transformed {len(all_topics)} documents into topics")
         return all_topics
 
+
+    def train_topic_model(self, docs: list, embeddings: np.ndarray) -> BERTopic:
+        """Train BERTopic model on documents and embeddings.
+        
+        Args:
+            docs: List of preprocessed documents
+            embeddings: Document embeddings array
+            
+        Returns:
+            Trained BERTopic model
+        """
+        try:
+            logger.info("Starting topic model training")
+            
+            # Phase 1: Initial Processing
+            logger.info(f"Processing Started at {time.time()}")
+            docs, embeddings = self._preprocess_data(docs, embeddings)
+            topic_representatives = self._process_chunks(docs, embeddings)
+                
+            # Phase 2: Topic Distillation
+            all_rep_docs, all_rep_embeddings = self._distill_topics(topic_representatives, docs, embeddings)
+            
+            # Phase 3: Final Model Training
+            self._train_final_model(all_rep_docs, all_rep_embeddings)
+            
+            # Phase 4: Document Mapping
+            self._map_documents(docs, embeddings)
+            
+            # Store number of topics
+            self.n_topics = len(set(self.topic_model.topics_)) - 1  # Exclude -1 (outlier topic)
+            logger.info(f"Model trained successfully. Found {self.n_topics} topics")
+            logger.info(f"Processing Completed at {time.time()}")
+            
+            # Clean up
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            return self.topic_model
+            
+        except Exception as e:
+            logger.error(f"Error in train_topic_model: {e}")
+            logger.error(traceback.format_exc())
+            raise
+
+    
     def _preprocess_data(self, docs: list, embeddings: np.ndarray) -> tuple:
         """Preprocess input data with memory mapping."""
         docs = [str(doc) for doc in docs]
@@ -190,32 +247,71 @@ class TopicModeler:
         return docs, mmap_embeddings
 
     def _process_chunks(self, docs: list, embeddings: np.ndarray) -> dict:
-        """Process documents in chunks for better memory efficiency."""
-        chunk_size = min(250000, len(docs))
-        topic_representatives = {}
-        
-        for i in range(0, len(docs), chunk_size):
-            chunk_end = min(i + chunk_size, len(docs))
+        """Process documents in chunks to identify representative examples."""
+        try:
+            topic_representatives = {}
+            chunk_size = gl.DOCS_PER_RUN
             
-            # Memory cleanup
-            if i % (chunk_size * 2) == 0:
-                gc.collect()
+            for i in range(0, len(docs), chunk_size):
+                chunk_end = min(i + chunk_size, len(docs))
+                chunk_docs = docs[i:chunk_end]
+                chunk_embeddings = embeddings[i:chunk_end]
+                
+                # Process chunk
+                chunk_model = self._create_chunk_model(len(chunk_docs))
+                chunk_model.fit(chunk_docs, chunk_embeddings)
+                
+                # Store representatives
+                self._store_representatives(chunk_model, chunk_docs, chunk_embeddings, topic_representatives)
+                
+                # Clear memory
+                del chunk_model
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
             
-            # Process chunk
-            chunk_docs = docs[i:chunk_end]
-            chunk_embeddings = embeddings[i:chunk_end]
-            chunk_model = self._create_chunk_model(len(chunk_docs))
+            # Save final representatives
+            representatives_path = os.path.join(self.output_dirs['models'], 'topic_representatives.json')
+            with open(representatives_path, 'w', encoding='utf-8') as f:
+                json.dump(topic_representatives, f, ensure_ascii=False, indent=2)
             
-            try:
-                chunk_topics, _ = chunk_model.fit_transform(chunk_docs, chunk_embeddings)
-                self._store_representatives(chunk_model, chunk_docs, chunk_embeddings, topic_representatives)
-            finally:
-                del chunk_model
-                gc.collect()
-        
-        return topic_representatives
+            return topic_representatives
+            
+        except Exception as e:
+            logger.error(f"Error in _process_chunks: {e}")
+            logger.error(traceback.format_exc())
+            raise
+
+    def _distill_topics(self, topic_representatives: dict, docs: list, embeddings: np.ndarray) -> tuple:
+            """Distill topics from representatives."""
+            logger.info("Phase 2: Topic distillation and refinement")
+            
+            # Calculate adaptive number of representatives
+            total_docs = len(docs)
+            max_representatives = self._calculate_max_representatives(total_docs)
+            
+            # Calculate target topics and docs per topic
+            target_topics = min(gl.NR_TOPICS[0], len(topic_representatives))
+            min_docs_per_topic = gl.MIN_DOCS_PER_TOPIC
+            max_docs_per_topic = max(gl.MAX_DOCS_PER_TOPIC, max_representatives // target_topics)
+            
+            # Sort and collect representative documents
+            sorted_topics = sorted(
+                topic_representatives.items(),
+                key=lambda x: len(x[1]['docs']),
+                reverse=True
+            )[:target_topics]
+            
+            all_rep_docs, all_rep_embeddings, topic_counts = self._collect_representatives(
+                sorted_topics, max_representatives, min_docs_per_topic, max_docs_per_topic
+            )
+            
+            # Fallback if insufficient representatives
+            if len(all_rep_docs) < min_docs_per_topic * 10:
+                logger.warning(f"Insufficient representative documents ({len(all_rep_docs)}). Using all documents.")
+                all_rep_docs = docs[:max_representatives]
+                all_rep_embeddings = embeddings[:max_representatives]
+            
+            return all_rep_docs, all_rep_embeddings
 
     def _train_final_model(self, all_rep_docs: list, all_rep_embeddings: list) -> None:
         """Train the final topic model."""
@@ -273,12 +369,28 @@ class TopicModeler:
                 break
         
         return all_rep_docs, all_rep_embeddings, topic_counts
+
+    def _reduce_topics(self, all_rep_docs: list) -> None:
+        """Reduce number of topics if needed."""
+        target_topics = gl.NR_TOPICS[0]
+        current_topics = len(self.topic_model.get_topics()) - 1
+        
+        if current_topics >= target_topics:
+            logger.info(f"Reducing topics from {current_topics} to {target_topics}")
+            try:
+                self.topic_model = self.topic_model.reduce_topics(
+                    docs=all_rep_docs,
+                    nr_topics=target_topics
+                )
+            except Exception as e:
+                logger.error(f"Error reducing topics: {e}")
+                logger.warning("Keeping original topic distribution")
     
     def _cleanup_temp_files(self):
         """Clean up temporary memory-mapped files."""
         try:
             temp_files = [
-                os.path.join(gl.output_folder, 'temp_embeddings.mmap'),
+                os.path.join(gl.output_folder, 'temp', 'embeddings', 'temp_embeddings.mmap'),
                 os.path.join(gl.output_folder, 'temp', 'topic_keywords_checkpoint.pkl')
             ]
             for file_path in temp_files:
@@ -642,48 +754,5 @@ class TopicModeler:
             
         except Exception as e:
             logger.error(f"Error in update_topic_labels: {e}")
-            logger.error(traceback.format_exc())
-            raise
-
-    def _calculate_max_representatives(self, total_docs: int) -> int:
-        """Calculate maximum number of representative documents."""
-        if total_docs < gl.MAX_ADAPTIVE_REPRESENTATIVES:
-            return total_docs
-        return min(
-            max(2000, int(np.sqrt(total_docs) * 10)),
-            gl.MAX_ADAPTIVE_REPRESENTATIVES
-        )
-
-    def train_topic_model(self, docs: list, embeddings: np.ndarray) -> BERTopic:
-        """Train BERTopic model on documents and embeddings.
-        
-        Args:
-            docs: List of preprocessed documents
-            embeddings: Document embeddings array
-            
-        Returns:
-            Trained BERTopic model
-        """
-        try:
-            logger.info("Starting topic model training")
-            
-            # Initialize model with optimal parameters
-            self.topic_model.embedding_model = None  # Use pre-computed embeddings
-            
-            # Fit the model
-            self.topic_model.fit(docs, embeddings)
-            
-            # Store number of topics
-            self.n_topics = len(set(self.topic_model.topics_)) - 1  # Exclude -1 (outlier topic)
-            logger.info(f"Model trained successfully. Found {self.n_topics} topics")
-            
-            # Clean up
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            
-            return self.topic_model
-            
-        except Exception as e:
-            logger.error(f"Error in train_topic_model: {e}")
             logger.error(traceback.format_exc())
             raise

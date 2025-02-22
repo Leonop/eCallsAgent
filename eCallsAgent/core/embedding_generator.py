@@ -57,36 +57,67 @@ class EmbeddingGenerator:
             return default_batch_size
 
     def save_embeddings(self, embeddings: np.ndarray, year_start: int, year_end: int) -> None:
-        """Save embeddings in compressed format."""
-        filename = f'{gl.data_filename}_embeddings_{year_start}_{year_end}.npz'
-        save_path = os.path.join(gl.temp_folder, filename)
+        """Save embeddings to disk in an efficient format.
         
-        # Save in compressed format
+        Args:
+            embeddings: numpy array of embeddings
+            year_start: start year of the data
+            year_end: end year of the data
+            
+        Returns:
+            str: Path where embeddings were saved
+        """
+        # Create embeddings directory if it doesn't exist
+        embeddings_dir = os.path.join(gl.temp_folder, "embeddings")
+        os.makedirs(embeddings_dir, exist_ok=True)
+        
+        # Save main file
+        filename = f"embeddings_{year_start}_{year_end}_{embeddings.shape[0]}x{embeddings.shape[1]}.npz"
+        save_path = os.path.join(embeddings_dir, filename)
         np.savez_compressed(save_path, embeddings=embeddings)
         logger.info(f"Saved compressed embeddings to {save_path}")
         
-        # Create backup
+        # Save backup
         backup_path = save_path.replace('.npz', '_backup.npz')
         np.savez_compressed(backup_path, embeddings=embeddings)
         logger.info(f"Saved compressed backup embeddings to {backup_path}")
 
-    def load_embeddings(self, year_start: int, year_end: int) -> np.ndarray:
-        """Load embeddings from compressed format."""
-        filename = f'{gl.data_filename}_embeddings_{year_start}_{year_end}.npz'
-        load_path = os.path.join(gl.temp_folder, filename)
+    def load_embeddings(self, year_start: int, year_end: int, use_mmap: bool = True) -> np.ndarray:
+        """Load embeddings from compressed format.
         
+        Args:
+            year_start: start year of the data
+            year_end: end year of the data
+            use_mmap: whether to load as memory-mapped array (recommended for large arrays)
+            
+        Returns:
+            numpy.ndarray: Loaded embeddings
+        """
         try:
-            with np.load(load_path) as data:
-                embeddings = data['embeddings']
-            logger.info(f"Loaded embeddings from {load_path}")
-            return embeddings
-        except FileNotFoundError:
-            # Try backup
-            backup_path = load_path.replace('.npz', '_backup.npz')
-            with np.load(backup_path) as data:
-                embeddings = data['embeddings']
-            logger.info(f"Loaded embeddings from backup {backup_path}")
-            return embeddings
+            if use_mmap and os.path.exists(gl.TEMP_EMBEDDINGS):
+                # Get shape from existing mmap file
+                mmap_tmp = np.memmap(gl.TEMP_EMBEDDINGS, dtype=np.float32, mode='r')
+                shape = mmap_tmp.shape
+                del mmap_tmp  # Close the temporary memory map
+                
+                # Load the actual data
+                embeddings = np.memmap(gl.TEMP_EMBEDDINGS, dtype=np.float32, mode='r', shape=shape)
+                logger.info(f"Loaded memory-mapped embeddings from {gl.TEMP_EMBEDDINGS}")
+                return embeddings
+            
+            # Fallback to compressed backup
+            backup_path = os.path.join(gl.TEMP_EMBEDDINGS, f'embeddings_{year_start}_{year_end}.npz')
+            if os.path.exists(backup_path):
+                with np.load(backup_path) as data:
+                    embeddings = data['embeddings']
+                logger.info(f"Loaded compressed embeddings from {backup_path}")
+                return embeddings
+            
+            raise FileNotFoundError(f"No embeddings found in {gl.TEMP_EMBEDDINGS} or {backup_path}")
+            
+        except Exception as e:
+            logger.error(f"Error loading embeddings: {e}")
+            raise
 
     def generate_embeddings(self, docs: list) -> np.ndarray:
         """Generate embeddings using a memory-mapped array for large datasets."""

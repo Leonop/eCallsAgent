@@ -42,7 +42,7 @@ def main() -> None:
         
         # Get absolute path to project root
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        file_path = os.path.join(project_root, 'input_data', 'raw', gl.data_filename)
+        file_path = os.path.join(project_root, 'eCallsAgent', 'input_data', 'raw', gl.data_filename)
         data_handler = DataHandler(file_path, gl.YEAR_START, gl.YEAR_END)
 
         # Load or process documents

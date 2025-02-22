@@ -9,7 +9,7 @@ output_folder = os.path.join(PROJECT_DIR, "eCallsAgent", "output")
 output_fig_folder = os.path.join(output_folder, "figures")
 temp_folder = os.path.join(output_folder, "temp")
 data_filename = 'ecc_transcripts_2006_2020.csv'
-input_folder = os.path.join(PROJECT_DIR, "input_data")
+input_folder = os.path.join(PROJECT_DIR, "eCallsAgent", "input_data")
 
 # Create required directories
 for directory in [data_folder, model_folder, output_folder, output_fig_folder, temp_folder]:

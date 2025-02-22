@@ -11,6 +11,7 @@ from multiprocessing import cpu_count
 from tqdm import tqdm
 from eCallsAgent.core.preprocess_earningscall import NlpPreProcess
 from eCallsAgent.config import global_options as gl
+import multiprocessing as mp
 
 logger = logging.getLogger(__name__)
 
@@ -98,41 +99,29 @@ class DataHandler:
             raise
 
     def preprocess_text(self, data: pd.DataFrame) -> list:
-        """Preprocess text data by filtering, cleaning, and removing duplicates."""
-        logger.info("Starting text preprocessing")
+        """Preprocess text data efficiently."""
         try:
-            data = data.query('speakertypeid != 1')
-            logger.info(f"After speaker filter: {len(data)} rows")
+            # Set up multiprocessing with explicit start method
+            ctx = mp.get_context('spawn')  # Use 'spawn' instead of 'fork'
             
-            # Convert text column and process dates
-            data['text'] = data[gl.TEXT_COLUMN].astype(str)
-            data['post_date'] = pd.to_datetime(data[gl.DATE_COLUMN], format='%Y-%m-%d', errors='coerce')
-            data['post_year'] = data['post_date'].dt.year
-            data['post_quarter'] = data['post_date'].dt.month
-            data['yearq'] = data['post_year'].astype(str) + 'Q' + data['post_quarter'].astype(str)
-            data.drop(columns=['Unnamed: 0'], errors='ignore', inplace=True)
-
-            processed_texts = []
-            batch_size = 100
-            for i in tqdm(range(0, len(data), batch_size), desc="Processing text"):
-                batch = data.iloc[i:i + batch_size]
-                batch_processed = batch.apply(
-                    lambda x: self.nlp_processor.preprocess_file(pd.DataFrame([x]), 'text')[0],
-                    axis=1
+            # Calculate chunk size
+            n_cores = mp.cpu_count()
+            chunk_size = max(1, len(data) // (n_cores * 4))
+            
+            # Process in parallel
+            with ctx.Pool(n_cores) as pool:
+                docs = pool.map(
+                    self._preprocess_single_doc,
+                    data[gl.TEXT_COLUMN].values,
+                    chunksize=chunk_size
                 )
-                processed_texts.extend(batch_processed)
-            
-            # Update text column and remove duplicates
-            data['text'] = processed_texts
-            data.drop_duplicates(subset='text', keep='first', inplace=True)
-            
-            # Filter out short texts
-            docs = [str(text) for text in data['text'] if len(str(text)) > 30]
-            logger.info(f"Final number of documents: {len(docs)}")
             
             return docs
-
+        
         except Exception as e:
             logger.error(f"Error in preprocess_text: {e}")
-            logger.error(traceback.format_exc())
-            raise 
+            raise
+
+    def _preprocess_single_doc(self, text: str) -> str:
+        """Preprocess a single document."""
+        return self.nlp_processor.preprocess_file(pd.DataFrame([{'text': text}]), 'text')[0] 

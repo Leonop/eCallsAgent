@@ -11,6 +11,8 @@ import os
 import pandas as pd
 from eCallsAgent.config import global_options as gl
 import traceback
+import gc
+import torch
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -73,7 +75,13 @@ class ModelEvaluator:
             # Convert inputs to numpy arrays and ensure correct types
             embeddings = np.array(embeddings, dtype=np.float32)
             labels = np.array(labels, dtype=np.int32)
-            
+            # Ensure embeddings and labels have matching dimensions
+            if len(embeddings) != len(labels):
+                logger.warning(f"Dimension mismatch: embeddings {len(embeddings)}, labels {len(labels)}")
+                # Take the smaller length to match dimensions
+                min_len = min(len(embeddings), len(labels))
+                embeddings = embeddings[:min_len]
+                labels = labels[:min_len]            
             # Debug info
             logger.info(f"Initial labels shape: {labels.shape}, unique labels: {np.unique(labels)}")
             logger.info(f"Initial embeddings shape: {embeddings.shape}")
@@ -111,22 +119,18 @@ class ModelEvaluator:
             min_samples = np.min(label_counts[label_counts > 0])
             logger.info(f"Samples per cluster - min: {min_samples}, max: {np.max(label_counts)}")
             
-            if np.any(label_counts < 2):
-                logger.warning("Some clusters have less than 2 samples")
-                # Remove clusters with less than 2 samples
-                valid_labels = np.where(label_counts >= 2)[0]
-                mask = np.isin(filtered_labels, valid_labels)
-                filtered_embeddings = filtered_embeddings[mask]
-
-                if len(filtered_embeddings) < 2:
-                    logger.warning("Not enough samples after filtering small clusters")
-                    return 0.0
-            
+            logger.warning("Some clusters have less than 2 samples")
+            # Remove clusters with less than 2 samples
+            valid_labels = np.where(label_counts >= 2)[0]
+            mask = np.isin(filtered_labels, valid_labels)
+            filtered_embeddings = filtered_embeddings[mask]
+            filtered_labels = filtered_labels[mask]
             # Relabel to ensure consecutive integers
-            unique_labels = np.unique(filtered_labels)
-            label_map = {old: new for new, old in enumerate(unique_labels)}
+            label_map = {old: new for new, old in enumerate(filtered_labels)}
             filtered_labels = np.array([label_map[label] for label in filtered_labels])
-            
+            if len(filtered_embeddings) < 2:
+                logger.warning("Not enough samples after filtering small clusters")
+                return 0.0
             logger.info(f"Final data for silhouette: {len(filtered_embeddings)} points, {len(np.unique(filtered_labels))} clusters")
             
             # Compute silhouette score
@@ -189,7 +193,9 @@ class ModelEvaluator:
                                 
                                 # Fit model
                                 topic_model.fit(docs, embeddings)
-                                
+                                                                # Get topics and embeddings for evaluation
+                                topics = topic_model.topics_
+                                reduced_embeddings = topic_model.umap_model.embedding_
                                 # Compute evaluation metrics
                                 coherence = self.compute_coherence_score(topic_model, docs)
                                 silhouette = self.compute_silhouette_score(embeddings, topic_model.topics_)
@@ -218,6 +224,12 @@ class ModelEvaluator:
                                           f"min_cluster_size={min_cluster_size}")
                                 logger.info(f"Coherence: {coherence:.4f}, Silhouette: {silhouette:.4f}, "
                                           f"Number of topics: {n_topics}")
+                                
+                                                                # Clear memory
+                                del topic_model
+                                gc.collect()
+                                if torch.cuda.is_available():
+                                    torch.cuda.empty_cache()
                                 
                             except Exception as e:
                                 logger.error(f"Error in combination {combination_count}: {e}")

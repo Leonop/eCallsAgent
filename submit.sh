@@ -2,9 +2,9 @@
 #SBATCH --job-name=main-bertTopic        # Job name
 #SBATCH --output=eCallsAgent/output/log_files/main.out      # Standard output and error log
 #SBATCH --error=eCallsAgent/output/log_files/main.err       # Separate file for error logs
-#SBATCH --nodes=1                   # Use one node
+#SBATCH --nodes=4                   # Use one node
 #SBATCH --ntasks-per-node=1          # One task per node
-#SBATCH --cpus-per-task=32           # Number of CPU cores per task (use the full node)
+#SBATCH --cpus-per-task=32          # Number of CPU cores per task (use the full node)
 #SBATCH --gres=gpu:1                # Request 1 GPU
 #SBATCH --partition=gpu72       # Use GPU partition
 #SBATCH --qos=gpu               # Required QOS for GPU partitions

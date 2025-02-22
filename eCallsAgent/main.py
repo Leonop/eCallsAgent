@@ -3,6 +3,9 @@ Main script for running the BERTopic analysis pipeline.
 """
 
 import os
+# Set tokenizer parallelism before importing any HuggingFace modules
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 import sys
 import logging
 import traceback
@@ -13,6 +16,7 @@ from eCallsAgent.core.embedding_generator import EmbeddingGenerator
 from eCallsAgent.core.model_eval import ModelEvaluator
 from eCallsAgent.core.topic_modeler import TopicModeler
 from eCallsAgent.utils.cuda_setup import setup_cuda
+import torch
 
 # Configure logging
 logging.basicConfig(
@@ -30,7 +34,7 @@ def main() -> None:
         
         # Get absolute path to project root
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        file_path = os.path.join(project_root, 'input_data', 'raw', gl.data_filename)
+        file_path = os.path.join(project_root, 'eCallsAgent', 'input_data', 'raw', gl.data_filename)
         data_handler = DataHandler(file_path, gl.YEAR_START, gl.YEAR_END)
 
         # Load or process documents

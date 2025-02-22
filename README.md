@@ -59,7 +59,7 @@ bash
 Wrap
 Copy
 pip install -r requirements.txt
-Configure settings in settings.py as needed.
+Configure settings in eCallsAgent/config/global_options.py as needed.
 Example Usage (Conceptual)
 python
 Wrap
@@ -93,3 +93,15 @@ Contributions are not accepted at this stage due to the project's restrictive co
 Acknowledgments
 Built with BERTopic for topic modeling.
 Inspired by the need for deeper insights into financial narratives.
+
+AIPHABIZ/
+├── eCallsAgent/               # Core package
+    ├── input_data/               # Data directory
+    ├── output/                   # Output directory
+    ├── temp/                     # Temporary directory
+    ├── models/                   # Model directory
+    ├── figures/                  # Figure directory
+├── tests/                    # Unit tests
+├── README.md                 # Documentation
+├── setup.sh                  # Setup script
+└── requirements.txt          # Dependencies

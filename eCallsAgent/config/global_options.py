@@ -2,29 +2,46 @@ import os
 from typing import Dict, List
 import pandas as pd
 
-
 # Directory locations
 UNIQUE_KEYS = ['companyid', 'keydevid', 'transcriptid', 'transcriptcomponentid'] # composite key in earnings call data
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-data_folder = os.path.join(PROJECT_DIR, "input_data", "external")
-model_folder = os.path.join(PROJECT_DIR, "eCallsAgent", "core")
-output_folder = os.path.join(PROJECT_DIR, "eCallsAgent", "output")
-output_fig_folder = os.path.join(output_folder, "figures")
-temp_folder = os.path.join(output_folder, "temp")
-log_folder = os.path.join(output_folder, "log_files")
-data_filename = 'ecc_transcripts_2006_2020.csv'
-input_folder = os.path.join(PROJECT_DIR, "input_data")
+ECALLS_DIR = os.path.join(PROJECT_DIR, "eCallsAgent")
 
-# Create required directories
-for directory in [data_folder, model_folder, output_folder, output_fig_folder, temp_folder, log_folder]:
+# File names and data settings
+data_filename = 'ecc_transcripts_2006_2020.csv'
+data_filename_prefix = 'Attn'  # Base filename for the data
+figure_base_name = f'bertopic_{data_filename}'  # Base name for figure files
+
+# Main directories
+output_folder = os.path.join(ECALLS_DIR, "output")
+temp_folder = os.path.join(output_folder, "temp")
+models_folder = os.path.join(output_folder, "models")
+input_folder = os.path.join(ECALLS_DIR, "input_data")
+log_folder = os.path.join(output_folder, "log_files")
+embeddings_folder = os.path.join(temp_folder, "embeddings")
+figures_folder = os.path.join(output_folder, "figures")
+
+# Create all required directories
+required_dirs = [
+    output_folder,
+    temp_folder,
+    models_folder,
+    input_folder,
+    log_folder,
+    embeddings_folder,
+    figures_folder
+]
+
+for directory in required_dirs:
     os.makedirs(directory, exist_ok=True)
-    
-stop_list = pd.read_csv(os.path.join(data_folder, "stoplist.csv"))['stopwords'].tolist()
-MODEL_SCORES = os.path.join(output_folder, "model_scores.txt")
+
+# File paths
+stop_list = pd.read_csv(os.path.join(ECALLS_DIR, "input_data", "external", "stoplist.csv"))['stopwords'].tolist()
+MODEL_SCORES = os.path.join(output_folder, "models", "model_scores.txt")
 DATE_COLUMN = "mostimportantdateutc"
-TOPIC_SCATTER_PLOT = os.path.join(output_fig_folder, "topic_scatter_plot.pdf")
+TOPIC_SCATTER_PLOT = os.path.join(figures_folder, "topic_scatter_plot.pdf")
 num_topic_to_plot = 20 # top_N topics to plot
-MODEL_SELECTION_RESULTS = os.path.join(output_folder, "model_selection_results.csv")
+MODEL_SELECTION_RESULTS = os.path.join(output_folder, "models", "model_selection_results.csv")
 TEXT_COLUMN = "componenttext" # the column in the main earnings call data that contains the earnings transcript
 START_ROWS = 0 # start row to read from the csv file
 NROWS = 15000000 # number of rows to read from the csv file
@@ -74,10 +91,9 @@ GRID_SEARCH_PARAMETERS = {
 # File naming patterns
 data_filename_prefix = 'Attn'  # Base filename for the data
 figure_base_name = f'bertopic_{data_filename}'  # Base name for figure files
-temp_folder = os.path.join(output_folder, "temp")
 
 # Temporary file paths
-TEMP_EMBEDDINGS = os.path.join(temp_folder, f'{data_filename_prefix}_embeddings.mmap')
+TEMP_EMBEDDINGS = os.path.join(embeddings_folder, f'{data_filename_prefix}_embeddings.mmap')
 TEMP_TOPIC_KEYWORDS = os.path.join(temp_folder, f'{data_filename_prefix}_topic_keywords.pkl')
 TEMP_TOPIC_LABELS = os.path.join(temp_folder, f'{data_filename_prefix}_topic_labels.json')
 PREPROCESSED_DOCS = os.path.join(input_folder, "preprocessed", f'preprocessed_docs_{data_filename_prefix}.txt')
