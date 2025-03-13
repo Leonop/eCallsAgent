@@ -1,5 +1,71 @@
 # eCallsAgent
 
+A Python package for analyzing earnings call transcripts using BERTopic and advanced NLP techniques.
+
+## Features
+
+- Document preprocessing and cleaning
+- BERT-based embedding generation
+- Topic modeling using BERTopic
+- Model evaluation and visualization
+- GPU acceleration support
+
+## Installation
+
+1. Clone the repository:
+```bash
+git clone <repository-url>
+cd eCallsAgent
+```
+
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+## Usage
+
+1. Place your earnings call data in `input_data/raw/`
+2. Configure settings in `config/global_options.py`
+3. Run the main script:
+```bash
+python -m eCallsAgent.main
+```
+
+## Project Structure
+
+```
+eCallsAgent/
+├── core/                 # Core functionality
+│   ├── data_handler.py   # Data processing
+│   ├── embedding_generator.py  # Embedding generation
+│   ├── model_eval.py    # Model evaluation
+│   ├── topic_modeler.py # Topic modeling
+│   └── preprocess_earningscall.py
+├── config/              # Configuration files
+├── utils/               # Utility functions
+├── input_data/          # Input data storage
+├── output/              # Output storage
+└── tests/               # Test files
+```
+
+## Testing
+
+Run tests using:
+```bash
+python -m unittest eCallsAgent/tests/test_pipeline.py
+```
+
+## Requirements
+
+- Python 3.8+
+- CUDA-compatible GPU (optional, for acceleration)
+- See requirements.txt for package dependencies
+
+## License
+
+[Your License]
+
 ## Description
 eCallsAgent is an advanced natural language processing (NLP) tool leveraging BERTopic modeling and fine-tuned by ChatGPT 4.0 to extract fundamental narratives from earnings call transcripts. Designed for financial analysts, researchers, and data scientists, it identifies key business topics and tracks their evolution over time, offering insights into corporate performance and strategy. With future potential for integration into large language models (LLMs) using chain-of-thought reasoning, eCallsAgent is a cutting-edge solution for deep research in financial fundamental narratives and context analysis.
 
@@ -104,4 +170,75 @@ AIPHABIZ/
 ├── tests/                    # Unit tests
 ├── README.md                 # Documentation
 ├── setup.sh                  # Setup script
+├── setup.py                  # Setup eCallsAgent Package
 └── requirements.txt          # Dependencies
+```
+
+## Skipping Grid Search in Topic Modeling
+
+The topic modeling process includes a grid search step that can be time-consuming. There are several ways to skip this step:
+
+### Option 1: Using Configuration File
+
+Edit the `eCallsAgent/config/global_options.py` file and set:
+
+```python
+# Flag to skip grid search and use default parameters instead
+SKIP_GRID_SEARCH = True
+```
+
+### Option 2: Using Command Line Arguments
+
+When running the main script, use the `--skip-grid-search` flag:
+
+```bash
+python eCallsAgent/main.py --skip-grid-search
+```
+
+### Option 3: Selecting Parameter Sets
+
+You can choose different parameter sets optimized for different numbers of topics:
+
+```bash
+# For default parameters
+python eCallsAgent/main.py --skip-grid-search --parameter-set default
+
+# For more topics
+python eCallsAgent/main.py --skip-grid-search --parameter-set more_topics
+
+# For fewer topics
+python eCallsAgent/main.py --skip-grid-search --parameter-set fewer_topics
+```
+
+### Customizing Default Parameters
+
+You can customize the default parameters by editing the `eCallsAgent/config/default_model_params.py` file. This file contains parameter sets for:
+
+- `DEFAULT_UMAP_PARAMS` and `DEFAULT_HDBSCAN_PARAMS`: Balanced parameters
+- `MORE_TOPICS_UMAP_PARAMS` and `MORE_TOPICS_HDBSCAN_PARAMS`: Parameters optimized for generating more topics
+- `FEWER_TOPICS_UMAP_PARAMS` and `FEWER_TOPICS_HDBSCAN_PARAMS`: Parameters optimized for generating fewer, more general topics
+
+### Performance Impact
+
+Skipping the grid search will significantly reduce the processing time but may result in a less optimal topic model. The default parameters are designed to work well for most cases, but they may not be the best for your specific dataset.
+
+
+# Earnings Call Transcript Themes
+
+Below is an aggregated table that organizes the raw keyword pairs into higher‐level “Topic” categories with their common “Subtopics.” This table not only makes the data structural but also captures the latent themes that often surface in earnings call transcripts—such as operational efficiency, financial performance, strategic guidance, risk factors, and innovation.
+
+| **Topic**                  | **Subtopics**                                                                                                                                                                          |
+|----------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Business Operations        | Vertical Integration; Employee & Client Retention; Market Expansion; Manufacturing; Supply Chain & Logistics; Advertising; Packaging; Retail & Franchise Strategy; General    |
+| Financial Performance      | Adjusted EBITDA; Revenue Growth; Gross Margin; Operating Income; Bonus Accrual; Free Cash Flow; Payout & Earnings Per Share; Non‐GAAP Measures; Other Performance Metrics         |
+| Financial Position         | Currency Impact; Capital Expenditures; Debt & Cash Management; Equity Structure; Contingent Liabilities; Loan Portfolio                                                               |
+| Forward Looking Statements | Future Outlook; Potential Risks; Guidance; Strategic Initiatives                                                                                                                       |
+| Risk Management / Factors  | Underwriting Risk; Cybersecurity Threats; Political Turbulence; Environmental & Legal Risks; Inflation & Commodity Price Pressures                                                              |
+| Governance & Controls      | Audit Participation; Board Structure; Disclosure & Regulatory Compliance; Tax & Legal Proceedings                                                                                      |
+| Business Strategy          | Conservative & Pricing Approaches; Digital Transformation; Mergers & Acquisitions; Strategic Partnerships; Market Trends; Resource Allocation                                               |
+| Product Development        | New Product Launches; Product Innovation & Strategy; R&D; Technology Deployment; Digital Platforms; Product Sales Performance                                                             |
+| Regulatory Matters         | Orphan Designation; Legal & Regulatory Compliance; Tax Compliance; Disclosure Practices                                                                                                 |
+| Market Analysis            | Commodity Prices; Market Trends; Competitive Landscape; Pricing Strategy; Supply Constraints; Channel & Distribution Strategies                                                              |
+| Technology & Innovation    | Digital Media & Software Development; Network & Data Storage Strategies; Technology Integration; Disruptive Innovation                                                                     |
+
+**Note:** The table reflects how earnings call language often intermingles operational execution with financial metrics and strategic outlook—revealing a dual focus on short‑term performance and long‑term positioning.
