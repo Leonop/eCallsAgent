@@ -46,8 +46,12 @@ TEXT_COLUMN = "componenttext" # the column in the main earnings call data that c
 START_ROWS = 0 # start row to read from the csv file
 NROWS = 15000000 # number of rows to read from the csv file
 CHUNK_SIZE = 1000 # number of rows to read at a time
-YEAR_END = 2013 # train the model on data from start year to this year
-YEAR_START = 2010 # start year of the data
+YEAR_END = 2014 # train the model on data from start year to this year
+YEAR_START = 2011 # start year of the data
+GPU_MEMORY = 40 # in GB
+MIN_COUNT = 5 # minimum number of occurrences for a bigram/trigram to be considered
+THRESHOLD = 10 # controls the tendency to form phrases, higher means fewer phrases
+
 # Batch Size for Bert Topic Model Training in BERTopic_big_data_hpc.py
 GPU_BATCH_SIZE = 512 # For V100, For Generating Embeddings with DeBERTa-v3-large
 DOCS_PER_RUN = 150_000 # For V100, For Training Topic Model
@@ -57,37 +61,59 @@ N_NEIGHBORS = [30]      # Increased from 15 for capturing a more global structur
 N_COMPONENTS = [50]     # Increased from 5 for a richer low-dimensional embedding space
 MIN_DIST = [0.1]        # Controls how tightly points can be packed; 0.1 encourages good separation
 base_batch_size = 1024
+EMBEDDING_DIM = 1024
 
 # HDBSCAN clustering parameters
 MIN_SAMPLES = [10]      # Remains at 10 to still capture smaller clusters reliably
 MIN_CLUSTER_SIZE = [30] # Increased from 40 to ensure clusters have enough documents for robust statistics
 
 # Topic modeling target parameters
-NR_TOPICS = [200]        # Typically, a reduced, manageable number of final topics
+NR_TOPICS = [300]        # Typically, a reduced, manageable number of final topics
 
 # Topic representations and feature extraction
 TOP_N_WORDS = [20]      # Increased from 15 to capture a broader context in topic keywords
 METRIC = ['cosine']
-EMBEDDING_MODELS = ['sentence-transformers/all-mpnet-base-v2']  # Consider alternatives if needed (e.g. 'all-MiniLM-L6-v2')
+
+# Enhanced embedding models - from general purpose to finance-specific
+EMBEDDING_MODELS = [
+    'sentence-transformers/all-mpnet-base-v2',   # Original model (good general purpose)
+    'BAAI/bge-large-en-v1.5',                    # Better for retrieval and similarity (1024 dimensions)
+    'thenlper/gte-large',                        # Large model with excellent semantic understanding (1024 dimensions) 
+    'intfloat/e5-large-v2',                      # Large model with strong performance (768 dimensions)
+    'ProsusAI/finbert',                          # Finance-specific BERT model
+    'yiyanghkust/finbert-tone',                  # Finance-specific model with tone analysis
+    'nbroad/ESG-BERT'                            # Environmental, Social, Governance reports model
+]
+
+# Default model index to use (0 = original model, 1-6 = enhanced models)
+# Change this value to use a different model
+DEFAULT_MODEL_INDEX = 1  # Updated to use BAAI/bge-large-en-v1.5
 
 # Parameters for Phase 2: Topic Modeling Distillation
-MAX_ADAPTIVE_REPRESENTATIVES = 100000 # Maximum number of adaptive representative documents to use for distillation in phase 2. 
+MAX_ADAPTIVE_REPRESENTATIVES = 500000 # Maximum number of adaptive representative documents to use for distillation in phase 2. 
 MIN_DOCS_PER_TOPIC = 10 # Minimum number of documents per topic to use for distillation
-MAX_DOCS_PER_TOPIC = 50 # Maximum number of documents per topic to use for distillation
+MAX_DOCS_PER_TOPIC = 500 # Maximum number of documents per topic to use for distillation
 
 # Vectorizer parameters for c-TF-IDF computation
 MAX_DF = [0.95]         # Retains filtering for terms appearing in over 95% of documents
 MIN_DF = [0.01]         # Terms must appear in at least 5% of documents (optionally test [0.01, 0.05])
-MIN_COUNT = 2           # SMART_N_GRAM minimum number of times a word must appear
-THRESHOLD = 5           # SMART_N_GRAM threshold parameter
 
+# Updated grid search parameters to produce more topics
 GRID_SEARCH_PARAMETERS = {
-            'n_neighbors': [15, 30, 50], #Suggestion: If topics seem too "blurry" or merged, you could try lowering this value (e.g., 15–25) to focus more on local structure; if you aim for broader topics, 30 is a reasonable starting point.
-            'n_components': [25, 50, 80],
-            'min_dist': [0.0, 0.1, 0.2],
-            'min_samples': [8, 10, 12, 15],
-            'min_cluster_size': [30]
-        }
+    'n_neighbors': [5, 8, 10],        # Lower values (5-15) tend to produce more topics
+    'n_components': [50, 75],     # Higher dimensionality can help preserve more structure
+    'min_dist': [0.0, 0.1],       # Lower values create tighter clusters
+    'min_samples': [5, 8, 10],         # Lower values are less strict on what forms a cluster
+    'min_cluster_size': [30]       # Lower values allow smaller topics
+}
+
+# Flag to skip grid search and use default parameters instead
+SKIP_GRID_SEARCH = True  # Set to True to skip grid search, False to perform grid search
+
+# Parameter set to use when skipping grid search
+# Options: 'default', 'more_topics', 'fewer_topics'
+PARAMETER_SET = 'default'
+
 # File naming patterns
 data_filename_prefix = 'Attn'  # Base filename for the data
 figure_base_name = f'bertopic_{data_filename}'  # Base name for figure files
@@ -227,7 +253,7 @@ SEED_TOPICS = [
     ["E-commerce performance", "online sales", "digital revenue", "web store results", "internet retail performance", "online marketplace metrics"],
     ["Data analytics capabilities", "business intelligence", "data-driven insights", "analytics infrastructure", "information analysis", "predictive modeling"],
     ["Artificial intelligence and machine learning applications", "AI integration", "ML implementation", "intelligent automation", "cognitive computing", "smart algorithms", "adaptive system", "adversal attack",
-    "adversal learning", "adversarial networks", "ai tools", "AI", "algorithmic decision-making", "ambient intelligence", "analytics", "artificial intelligence", "association rules", "attention mechanisms", "augmented reality", "automated reasoning", "automation",
+    "adversal learning", "adversarial networks", "ai tools", "AI", "algorithmic decision-making", "ambient intelligence", "analytics", "artificial intelligence", "association rules", "attention mechanisms", "augmented reality", "automation",
     "autonomous systems", "bayesian networks", "BERT", "big data", "chatbot", "chatgpt", "clustering algorithms", "cognitive analytics", "cognitive computing", "computer vision", "content generat", "contextual understand", "conversational ai",
     "data science", "decision trees", "deep learning", "deepfake", "digital assistant", "digital transformation", "dimensionality reduction", "edge computing", "expert systems", "fake news detection", "fine-tuning", "generative models", "human-robot collaboration", "image recognition", "intelligent agents", "intelligent assistant",
     "intelligent automation", "intelligent edge", "intelligent interface", "intelligent optimization", "intelligent sensors", "internet of things", "keywords", "large language model", "LLM", "machine intelligence", "machine learning", "model selection", "natural language processing", "neural architecture search", "neural networks",
@@ -266,7 +292,7 @@ SEED_TOPICS = [
     ["Executive leadership transitions", "C-suite changes", "management shuffle", "leadership succession", "executive appointments", "senior management changes"],
     ["Board composition", "director lineup", "board structure", "governance makeup", "board demographics", "directorship changes"],
     ["Subsidiary performance", "division results", "affiliate performance", "business unit outcomes", "subsidiary contributions", "controlled entity results"],
-    ["Sector-specific KPIs", "industry benchmarks", "vertical-specific metrics", "sector performance indicators", "industry standards", "niche measurements"],
+    ["Sector-specific KPIs", "industry benchmarks", "vertical-specific metrics", "sector performance indicators", "industry standards"],
     ["Regulatory compliance metrics", "compliance scores", "regulatory adherence measures", "conformity indicators", "rule-following metrics", "policy compliance rates"],
     ["Industry benchmarking", "peer comparison", "competitive benchmarking", "industry standards comparison", "market positioning", "sector performance ranking", "bill",
     "commodity price", "competitive advantage", "competitive environment", "competitive landscape", "competitive position", "competitive risk", "competitive threat", "consumer growth", "consumer trend", "consumption growth", "consumption trend",

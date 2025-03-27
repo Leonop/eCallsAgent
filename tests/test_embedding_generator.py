@@ -32,7 +32,7 @@ def test_initialization(embedding_generator):
 
 def test_calculate_optimal_batch_size(embedding_generator):
     """Test optimal batch size calculation."""
-    batch_size = embedding_generator._calculate_optimal_batch_size(768)  # Common embedding dimension
+    batch_size = embedding_generator._calculate_optimal_batch_size(gl.EMBEDDING_DIM)  # Common embedding dimension
     assert batch_size > 0
     assert isinstance(batch_size, int)
 

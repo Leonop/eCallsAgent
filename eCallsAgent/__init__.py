@@ -8,12 +8,7 @@ from .core.data_handler import DataHandler
 from .core.embedding_generator import EmbeddingGenerator
 from .core.model_eval import ModelEvaluator
 from .core.topic_modeler import TopicModeler
-from .utils.visualization import (
-    create_topic_heatmap,
-    create_topic_hierarchy,
-    create_intertopic_distance_map,
-    create_umap_topic_clusters
-)
+from .core.visualization import TopicVis
 from .utils.cuda_setup import setup_cuda
 from .utils.logging_utils import setup_logging
 
@@ -22,10 +17,7 @@ __all__ = [
     'EmbeddingGenerator',
     'ModelEvaluator',
     'TopicModeler',
-    'create_topic_heatmap',
-    'create_topic_hierarchy',
-    'create_intertopic_distance_map',
-    'create_umap_topic_clusters',
+    'TopicVis',
     'setup_cuda',
     'setup_logging'
 ]

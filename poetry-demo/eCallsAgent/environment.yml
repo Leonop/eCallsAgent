@@ -1,0 +1,149 @@
+name: bertopic_env2
+channels:
+  - nvidia
+  - rapidsai
+  - conda-forge
+  - pytorch
+  - defaults
+dependencies:
+  - python=3.8
+  - cudatoolkit=11.7
+  - aiohappyeyeballs=2.4.4
+  - aiohttp=3.10.11
+  - aiosignal=1.3.1
+  - anyio=4.5.2
+  - asttokens=3.0.0
+  - async-timeout=5.0.1
+  - attrs=25.1.0
+  - backcall=0.2.0
+  - bertopic=0.14.1
+  - bleach=6.1.0
+  - blis=0.7.11
+  - catalogue=2.0.10
+  - certifi=2025.1.31
+  - charset-normalizer=3.4.1
+  - click=8.1.8
+  - cloudpickle=3.1.1
+  - comm=0.2.2
+  - confection=0.1.5
+  - cycler=0.12.1
+  - cymem=2.0.11
+  - cython=0.29.37
+  - cudf=22.12.* # Downgraded to match CUDA 11.7
+  - cuml=22.12.* # Downgraded to match CUDA 11.7
+  - rmm=22.12.* # Added for RAPIDS memory management
+  - dask=2023.5.0
+  - decorator=5.2.1
+  - distro=1.9.0
+  - exceptiongroup=1.2.2
+  - executing=2.2.0
+  - filelock=3.16.1
+  - fonttools=4.56.0
+  - frozenlist=1.5.0
+  - fsspec=2025.2.0
+  - gensim=4.2.0
+  - h11=0.14.0
+  - hdbscan=0.8.40
+  - httpcore=1.0.7
+  - httpx=0.28.1
+  - huggingface-hub=0.12.1
+  - idna=3.10
+  - importlib-metadata=8.5.0
+  - iniconfig=2.0.0
+  - ipython=8.12.3
+  - ipywidgets=8.1.5
+  - jedi=0.19.2
+  - jinja2=3.1.5
+  - jiter=0.8.2
+  - joblib=1.4.2
+  - jupyterlab_widgets=3.0.13
+  - kaleido=0.2.1
+  - kiwisolver=1.4.7
+  - langcodes=3.3.0
+  - llvmlite=0.41.1
+  - locket=1.0.0
+  - markupsafe=2.1.5
+  - matplotlib=3.5.2
+  - matplotlib-inline=0.1.7
+  - mpmath=1.3.0
+  - multidict=6.1.0
+  - murmurhash=1.0.12
+  - narwhals=1.28.0
+  - networkx=3.1
+  - nltk=3.9.1
+  - numba=0.57.1 # Changed to match version in setup script
+  - numpy=1.23.5 # Changed to match version in setup script
+  - pandas=1.5.3
+  # Removed CUDA 12.x packages
+  - openai=1.65.2
+  - packaging=24.2
+  - parso=0.8.4
+  - partd=1.4.1
+  - pathlib_abc=0.1.1
+  - pathy=0.11.0
+  - pexpect=4.9.0
+  - pickleshare=0.7.5
+  - pillow=10.4.0
+  - plotly=6.0.0
+  - pluggy=1.5.0
+  - preshed=3.0.9
+  - prompt_toolkit=3.0.50
+  - propcache=0.2.0
+  - psutil=7.0.0
+  - ptyprocess=0.7.0
+  - pure_eval=0.2.3
+  - pydantic=1.10.8
+  - pygments=2.19.1
+  - pynndescent=0.5.13
+  - pyparsing=3.1.4
+  - pytest=8.3.5
+  - python-dateutil=2.9.0.post0
+  - pytz=2025.1
+  - pyyaml=6.0.2
+  - regex=2024.11.6
+  - requests=2.32.3
+  - safetensors=0.5.3
+  - scikit-learn=1.3.2
+  - scipy=1.10.1
+  - seaborn=0.12.2
+  - sentence-transformers=2.2.2
+  - sentencepiece=0.2.0
+  - six=1.17.0
+  - smart-open=6.4.0
+  - sniffio=1.3.1
+  - spacy=3.5.3
+  - spacy-legacy=3.0.12
+  - spacy-loggers=1.0.4
+  - srsly=2.4.8
+  - stack-data=0.6.3
+  - swifter=1.3.4
+  - sympy=1.13.3
+  - tenacity=9.0.0
+  - thinc=8.1.10
+  - threadpoolctl=3.5.0
+  - tokenizers=0.13.2
+  - tomli=2.2.1
+  - toolz=1.0.0
+  - pytorch::pytorch=1.13.1=py3.8_cuda11.7_cudnn8.5.0_0 # Fixed PyTorch specification for CUDA 11.7
+  - pytorch::torchvision=0.14.1=py38_cu117 # Fixed torchvision specification for CUDA 11.7
+  - pytorch::torchaudio=0.13.1=py38_cu117 # Fixed torchaudio specification for CUDA 11.7
+  - tqdm=4.67.1
+  - traitlets=5.14.3
+  - transformers=4.26.1
+  - triton=3.0.0
+  - typer=0.7.0
+  - typing_extensions=4.12.2
+  - tzdata=2025.1
+  - umap-learn=0.5.7
+  - urllib3=2.2.3
+  - wasabi=0.10.1
+  - wcwidth=0.2.13
+  - webencodings=0.5.1
+  - widgetsnbextension=4.0.13
+  - yarl=1.15.2
+  - zipp=3.20.2
+  - pip  # ensures pip is installed
+  - pip:
+      - en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.5.0/en_core_web_sm-3.5.0-py3-none-any.whl#sha256=0964370218b7e1672a30ac50d72cdc6b16f7c867496f1d60925691188f4d2510
+      # Added CuPy with correct CUDA version
+      - cupy-cuda11x==11.6.0 # Added for proper CUDA 11.7 compatibility

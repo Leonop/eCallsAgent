@@ -13,6 +13,12 @@ from eCallsAgent.config import global_options as gl
 import traceback
 import gc
 import torch
+import json
+import time
+from typing import Tuple, Dict
+from itertools import product
+from joblib import Memory
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -26,6 +32,11 @@ class ModelEvaluator:
     """Handles model evaluation and parameter tuning."""
     def __init__(self):
         self.results = []
+        # Create cache directory
+        self.cache_dir = os.path.join(gl.temp_folder, 'hdbscan_cache')
+        os.makedirs(self.cache_dir, exist_ok=True)
+        # Initialize memory cache
+        self.memory = Memory(self.cache_dir, verbose=0)
         
     def compute_coherence_score(self, topic_model, docs):
         """Compute topic coherence score."""
@@ -148,94 +159,225 @@ class ModelEvaluator:
             logger.error(traceback.format_exc())
             return 0.0
 
-    def grid_search(self, docs, embeddings):
-        """Perform grid search over model parameters."""
-        param_grid = gl.GRID_SEARCH_PARAMETERS
-        results = []
-        total_combinations = np.prod([len(values) for values in param_grid.values()])
-        logger.info(f"Starting grid search with {total_combinations} parameter combinations")
-        
-        # Create results directory
-        results_dir = os.path.join(gl.output_folder, 'grid_search_results')
-        os.makedirs(results_dir, exist_ok=True)
-        
-        combination_count = 0
-        for n_neighbors in param_grid['n_neighbors']:
-            for n_components in param_grid['n_components']:
-                for min_dist in param_grid['min_dist']:
-                    for min_samples in param_grid['min_samples']:
-                        for min_cluster_size in param_grid['min_cluster_size']:
-                            combination_count += 1
-                            logger.info(f"Testing combination {combination_count}/{total_combinations}")
-                            
-                            try:
-                                # Configure model with current parameters
-                                umap_model = UMAP(
-                                    n_neighbors=n_neighbors,
-                                    n_components=n_components,
-                                    min_dist=min_dist,
-                                    metric='cosine',
-                                    random_state=42
-                                )
+    def grid_search(self, docs: list, embeddings: np.ndarray) -> Tuple[BERTopic, Dict]:
+        """Perform grid search for optimal parameters."""
+        try:
+            # Ensure embeddings are float64
+            embeddings = embeddings.astype(np.float64)
+            
+            # Create results directory
+            results_dir = os.path.join(gl.models_folder, 'grid_search_results')
+            os.makedirs(results_dir, exist_ok=True)
+            
+            logger.info(f"Starting grid search with {len(docs)} representative documents")
+            
+            best_score = float('-inf')
+            best_model = None
+            best_params = None
+            results = []
+            
+            # Get parameter grid from global options
+            param_grid = gl.GRID_SEARCH_PARAMETERS
+            total_combinations = np.prod([len(values) for values in param_grid.values()])
+            
+            # Calculate target topics range - More flexible range
+            # With 13618 docs, this would give min_topics = 68 (instead of 136)
+            min_topics = max(10, len(docs) // 200)  # Reduced divisor to lower minimum topics
+            max_topics = min(500, len(docs) // 20)  # Keep the same max
+            
+            logger.info(f"Target topic range: {min_topics} to {max_topics}")
+            target_topics_range = (min_topics, max_topics)
+            
+            # Track skipped combinations for analysis
+            skipped_combinations = 0
+            skipped_reasons = {
+                'too_few': 0,
+                'too_many': 0
+            }
+            
+            combination_count = 0
+            for n_neighbors in param_grid['n_neighbors']:
+                for n_components in param_grid['n_components']:
+                    for min_dist in param_grid['min_dist']:
+                        for min_samples in param_grid['min_samples']:
+                            for min_cluster_size in param_grid['min_cluster_size']:
+                                combination_count += 1
+                                logger.info(f"Testing combination {combination_count}/{total_combinations}")
                                 
-                                hdbscan_model = HDBSCAN(
-                                    min_samples=min_samples,
-                                    min_cluster_size=min_cluster_size,
-                                    metric='euclidean',
-                                    prediction_data=True
-                                )
+                                try:
+                                    # Configure model with current parameters
+                                    umap_model = UMAP(
+                                        n_neighbors=n_neighbors,
+                                        n_components=n_components,
+                                        min_dist=min_dist,
+                                        metric='cosine',
+                                        random_state=42,
+                                        verbose=False,
+                                        n_jobs=1 if torch.cuda.is_available() else -1,
+                                        low_memory=True
+                                    )
+                                    
+                                    hdbscan_model = HDBSCAN(
+                                        min_samples=min_samples,
+                                        min_cluster_size=min_cluster_size,
+                                        metric='euclidean',
+                                        prediction_data=True,
+                                        core_dist_n_jobs=1,
+                                        memory=self.memory,  # Use the initialized memory cache
+                                        algorithm='best'
+                                    )
+                                    
+                                    topic_model = BERTopic(
+                                        umap_model=umap_model,
+                                        hdbscan_model=hdbscan_model,
+                                        calculate_probabilities=False,
+                                        verbose=False,
+                                        seed_topic_list=gl.SEED_TOPICS,
+                                        min_topic_size=gl.OPTIMAL_DOCS_PER_TOPIC
+                                    )
+                                    
+                                    # Train the model
+                                    topic_model.fit(docs, embeddings)
+                                    
+                                    # Count topics (excluding -1 noise topic)
+                                    topics = set(topic_model.topics_)
+                                    if -1 in topics:
+                                        topics.remove(-1)
+                                    n_topics = len(topics)
+                                    
+                                    # Check if the number of topics is in the desired range
+                                    if target_topics_range[0] <= n_topics <= target_topics_range[1]:
+                                        logger.info(f"Valid combination - Topics: {n_topics}")
+                                        
+                                        # Evaluate the model
+                                        coherence_score = self.compute_coherence_score(topic_model, docs)
+                                        silhouette_score = self.compute_silhouette_score(embeddings, topic_model.topics_)
+                                        
+                                        # Calculate distance to target topics
+                                        target_topics = (target_topics_range[0] + target_topics_range[1]) // 2
+                                        topic_count_score = 1 - abs(n_topics - target_topics) / (target_topics_range[1] - target_topics_range[0])
+                                        
+                                        # Combined score (weighted)
+                                        combined_score = (
+                                            0.4 * coherence_score +
+                                            0.4 * silhouette_score +
+                                            0.2 * topic_count_score
+                                        )
+                                        
+                                        # Save results
+                                        result = {
+                                            'n_neighbors': n_neighbors,
+                                            'n_components': n_components,
+                                            'min_dist': min_dist,
+                                            'min_samples': min_samples,
+                                            'min_cluster_size': min_cluster_size,
+                                            'coherence_score': coherence_score,
+                                            'silhouette_score': silhouette_score,
+                                            'n_topics': n_topics,
+                                            'topic_count_score': topic_count_score,
+                                            'combined_score': combined_score
+                                        }
+                                        results.append(result)
+                                        
+                                        # Update best model if needed
+                                        if combined_score > best_score:
+                                            best_score = combined_score
+                                            best_model = topic_model
+                                            best_params = {
+                                                'n_neighbors': n_neighbors,
+                                                'n_components': n_components,
+                                                'min_dist': min_dist,
+                                                'min_samples': min_samples,
+                                                'min_cluster_size': min_cluster_size
+                                            }
+                                            logger.info(f"New best score: {best_score:.4f} with {n_topics} topics")
+                                    else:
+                                        skipped_combinations += 1
+                                        if n_topics < target_topics_range[0]:
+                                            skipped_reasons['too_few'] += 1
+                                        else:
+                                            skipped_reasons['too_many'] += 1
+                                        logger.info(f"Skipping combination - Topics {n_topics} outside target range {target_topics_range}")
+                                        
+                                        # Save minimal info about skipped combinations for analysis
+                                        result = {
+                                            'n_neighbors': n_neighbors,
+                                            'n_components': n_components,
+                                            'min_dist': min_dist,
+                                            'min_samples': min_samples,
+                                            'min_cluster_size': min_cluster_size,
+                                            'n_topics': n_topics,
+                                            'skipped': True
+                                        }
+                                        results.append(result)
+                                    
+                                    # Clean up
+                                    if not best_model or topic_model != best_model:
+                                        del topic_model
+                                        gc.collect()
+                                        if torch.cuda.is_available():
+                                            torch.cuda.empty_cache()
                                 
-                                topic_model = BERTopic(
-                                    umap_model=umap_model,
-                                    hdbscan_model=hdbscan_model,
-                                    calculate_probabilities=False
-                                )
-                                
-                                # Fit model
-                                topic_model.fit(docs, embeddings)
-                                                                # Get topics and embeddings for evaluation
-                                topics = topic_model.topics_
-                                reduced_embeddings = topic_model.umap_model.embedding_
-                                # Compute evaluation metrics
-                                coherence = self.compute_coherence_score(topic_model, docs)
-                                silhouette = self.compute_silhouette_score(embeddings, topic_model.topics_)
-                                n_topics = len(set(topic_model.topics_)) - 1  # Exclude -1
-                                
-                                result = {
-                                    'n_neighbors': n_neighbors,
-                                    'n_components': n_components,
-                                    'min_dist': min_dist,
-                                    'min_samples': min_samples,
-                                    'min_cluster_size': min_cluster_size,
-                                    'coherence_score': coherence,
-                                    'silhouette_score': silhouette,
-                                    'n_topics': n_topics
-                                }
-                                
-                                results.append(result)
-                                
-                                # Save intermediate results
-                                df_results = pd.DataFrame(results)
-                                df_results.to_csv(os.path.join(results_dir, 'grid_search_results.csv'), index=False)
-                                
-                                logger.info(f"Results for combination {combination_count}:")
-                                logger.info(f"Parameters: n_neighbors={n_neighbors}, n_components={n_components}, "
-                                          f"min_dist={min_dist}, min_samples={min_samples}, "
-                                          f"min_cluster_size={min_cluster_size}")
-                                logger.info(f"Coherence: {coherence:.4f}, Silhouette: {silhouette:.4f}, "
-                                          f"Number of topics: {n_topics}")
-                                
-                                                                # Clear memory
-                                del topic_model
-                                gc.collect()
-                                if torch.cuda.is_available():
-                                    torch.cuda.empty_cache()
-                                
-                            except Exception as e:
-                                logger.error(f"Error in combination {combination_count}: {e}")
-                                continue
-        
-        return results
+                                except Exception as e:
+                                    logger.error(f"Error evaluating parameters: {e}")
+                                    logger.error(traceback.format_exc())
+                                    continue
+            
+            # Save results to CSV
+            if results:
+                results_df = pd.DataFrame(results)
+                results_file = os.path.join(results_dir, f'grid_search_results_{time.strftime("%Y%m%d_%H%M%S")}.csv')
+                results_df.to_csv(results_file, index=False)
+                logger.info(f"Saved grid search results to {results_file}")
+            
+            # Report on skipped combinations
+            logger.info(f"Grid search complete: {len(results) - skipped_combinations} valid combinations, {skipped_combinations} skipped")
+            logger.info(f"Skipped reasons: {skipped_reasons}")
+            
+            # If no valid combinations were found, select the one closest to target range
+            if not best_model and results:
+                logger.warning("No valid parameter combinations found within target range. Selecting closest match.")
+                # Find the combination with the most topics (closest to min_topics)
+                closest_result = max([r for r in results if 'skipped' in r], key=lambda x: x['n_topics'])
+                logger.info(f"Selected parameters with {closest_result['n_topics']} topics (below target minimum of {min_topics})")
+                
+                # Use these parameters to create a model
+                umap_model = UMAP(
+                    n_neighbors=closest_result['n_neighbors'],
+                    n_components=closest_result['n_components'],
+                    min_dist=closest_result['min_dist'],
+                    metric='cosine',
+                    random_state=42
+                )
+                hdbscan_model = HDBSCAN(
+                    min_samples=closest_result['min_samples'],
+                    min_cluster_size=closest_result['min_cluster_size'],
+                    metric='euclidean',
+                    prediction_data=True,
+                    core_dist_n_jobs=1,
+                    memory=self.memory
+                )
+                best_model = BERTopic(
+                    umap_model=umap_model,
+                    hdbscan_model=hdbscan_model,
+                    calculate_probabilities=False,
+                    verbose=True
+                )
+                best_model.fit(docs, embeddings)
+                best_params = {
+                    'n_neighbors': closest_result['n_neighbors'],
+                    'n_components': closest_result['n_components'],
+                    'min_dist': closest_result['min_dist'],
+                    'min_samples': closest_result['min_samples'],
+                    'min_cluster_size': closest_result['min_cluster_size']
+                }
+            
+            return best_model, best_params
+            
+        except Exception as e:
+            logger.error(f"Error in grid search: {e}")
+            logger.error(traceback.format_exc())
+            return None, None
 
     def plot_parameter_effects(self, results):
         """Plot the effects of different parameters on model performance."""

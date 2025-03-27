@@ -13,7 +13,7 @@ from .visualization import (
     create_topic_similarity_heatmap,
     create_topic_wordcloud
 )
-from .cuda_setup import setup_cuda
+from .cuda_setup import setup_cuda, check_cuml_availability
 from .logging_utils import (
     setup_logging,
     log_system_info,
@@ -26,6 +26,7 @@ __all__ = [
     'create_topic_similarity_heatmap',
     'create_topic_wordcloud',
     'setup_cuda',
+    'check_cuml_availability',
     'setup_logging',
     'log_system_info',
     'log_gpu_info'
