@@ -51,23 +51,23 @@ def get_nlp():
             _nlp = None
     return _nlp
 
-def get_bert_model():
-    """Get or initialize BERT model and tokenizer."""
-    global _model, _tokenizer
-    if _model is None or _tokenizer is None:
-        try:
-            import torch
-            from transformers import BertTokenizer, BertModel
-            _tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-            if torch.cuda.is_available():
-                _model = BertModel.from_pretrained('bert-base-uncased')
-                _model.eval()
-            logger.info("Successfully loaded BERT model and tokenizer")
-        except Exception as e:
-            logger.error(f"Error loading BERT model/tokenizer: {e}")
-            _model = None
-            _tokenizer = None
-    return _model, _tokenizer
+# def get_bert_model():
+#     """Get or initialize BERT model and tokenizer."""
+#     global _model, _tokenizer
+#     if _model is None or _tokenizer is None:
+#         try:
+#             import torch
+#             from transformers import BertTokenizer, BertModel
+#             _tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+#             if torch.cuda.is_available():
+#                 _model = BertModel.from_pretrained('bert-base-uncased')
+#                 _model.eval()
+#             logger.info("Successfully loaded BERT model and tokenizer")
+#         except Exception as e:
+#             logger.error(f"Error loading BERT model/tokenizer: {e}")
+#             _model = None
+#             _tokenizer = None
+#     return _model, _tokenizer
 
 class NlpPreProcess(object):
     """
@@ -95,7 +95,7 @@ class NlpPreProcess(object):
         
         # Initialize NLP models
         self.nlp = get_nlp()
-        self.model, self.tokenizer = get_bert_model()
+        # self.model, self.tokenizer = get_bert_model()
         
     def remove_stopwords_from_sentences(self, text):
         '''Split text by sentence, remove stopwords in each sentence, and rejoin sentences into one string'''
@@ -173,10 +173,10 @@ class NlpPreProcess(object):
         # Enable tqdm for pandas operations
         tqdm.pandas()
         
-        # Step 1: Remove punctuation and digits
-        df[col] = df[col].progress_apply(self.remove_punct_and_digits)
-        print(f"Step 1 completed in {datetime.now() - stime}")
-        print(df.head())
+        # # Step 1: Remove punctuation and digits
+        # df[col] = df[col].progress_apply(self.remove_punct_and_digits)
+        # print(f"Step 1 completed in {datetime.now() - stime}")
+        # print(df.head())
         
         # Step 2: Tokenize into words
         if self.nlp is not None:
@@ -195,20 +195,20 @@ class NlpPreProcess(object):
         print(f"Step 4 completed in {datetime.now() - stime}")
         print(df.head())
         
-        # Step 5: Create bigrams and trigrams
-        try:
-            df[col] = pd.Series(self.smart_ngrams(df[col].tolist(), gl.MIN_COUNT, gl.THRESHOLD))
-            print(f"Step 5 completed in {datetime.now() - stime}")
-        except Exception as e:
-            logger.error(f"Error in smart_ngrams: {e}")
-            # Continue without n-grams if there's an error
-            logger.warning("Continuing without n-grams")
-        print(df.head())
+        # # Step 5: Create bigrams and trigrams
+        # try:
+        #     df[col] = pd.Series(self.smart_ngrams(df[col].tolist(), gl.MIN_COUNT, gl.THRESHOLD))
+        #     print(f"Step 5 completed in {datetime.now() - stime}")
+        # except Exception as e:
+        #     logger.error(f"Error in smart_ngrams: {e}")
+        #     # Continue without n-grams if there's an error
+        #     logger.warning("Continuing without n-grams")
+        # print(df.head())
         
-        # Step 6: Remove stopwords from bigrams and trigrams
-        # df[col] = df[col].progress_apply(lambda x: self.remove_stopwords(x) if isinstance(x, list) else x and len(str(x)) >= 2)
-        print(f"Step 6 completed in {datetime.now() - stime}")
-        print(df.head())
+        # # Step 6: Remove stopwords from bigrams and trigrams
+        # # df[col] = df[col].progress_apply(lambda x: self.remove_stopwords(x) if isinstance(x, list) else x and len(str(x)) >= 2)
+        # print(f"Step 6 completed in {datetime.now() - stime}")
+        # print(df.head())
         
         # Step 7: Rejoin tokenized words into a string
         df[col] = df[col].progress_apply(lambda x: ' '.join(x) if isinstance(x, list) else str(x))
@@ -284,11 +284,8 @@ class NlpPreProcess(object):
             # Iterate the first half of the list of sentences
             # Remove the snippet if it has more than two safe harbor keywords or less than 2 with forward-looking or forwardlooking 
             # in its content
-            if (num_keywords > 2) or (('forward-looking' in snippet.lower()) or ('forward looking' in snippet.lower())):
-                return ''
-            else:
-                text  
-        # Return the updated transcript text after removing any matching "safe harbor" snippet
+            if not ((num_keywords > 2) or (('forward-looking' in snippet.lower()) or ('forward looking' in snippet.lower()))):
+                text.append(snippet)
         return text
 
 # if __name__ == '__main__':

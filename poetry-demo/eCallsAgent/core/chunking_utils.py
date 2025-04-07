@@ -45,9 +45,10 @@ except Exception as e:
 
 # add logger
 logger = logging.getLogger(__name__)
-
+    
 def process_chunk_worker(chunk_idx: int, chunk_docs: List[str], chunk_embeddings: np.ndarray,
                         total_chunks: int,
+                        embedding_model=None,
                         _cpu: bool = True
                         ):
     """Process a chunk of documents for topic modeling
@@ -58,6 +59,8 @@ def process_chunk_worker(chunk_idx: int, chunk_docs: List[str], chunk_embeddings
         chunk_docs: List of documents in the chunk
         chunk_embeddings: Embeddings for the documents
         total_chunks: Total number of chunks being processed
+        embedding_model: Optional embedding model to use
+        _cpu: Whether to use CPU-based models
         
     Returns:
         Dictionary mapping topic keys to representative documents and embeddings
@@ -67,32 +70,33 @@ def process_chunk_worker(chunk_idx: int, chunk_docs: List[str], chunk_embeddings
         logger = logging.getLogger(__name__)
         logger.info(f"Worker processing chunk {chunk_idx+1}/{total_chunks} with {len(chunk_docs)} documents")
         
+        # Ensure embeddings are numpy arrays on CPU
+        if isinstance(chunk_embeddings, torch.Tensor):
+            chunk_embeddings = chunk_embeddings.cpu().numpy()
+        elif hasattr(chunk_embeddings, 'get'):  # For CUDA arrays
+            chunk_embeddings = chunk_embeddings.get()
+        chunk_embeddings = np.asarray(chunk_embeddings)
+        
         # Use best parameters from default_model_params
         n_neighbors = BEST_UMAP_PARAMS['n_neighbors']
         n_components = BEST_UMAP_PARAMS['n_components']
         min_dist = BEST_UMAP_PARAMS['min_dist']
         min_samples = BEST_HDBSCAN_PARAMS['min_samples']
         min_cluster_size = BEST_HDBSCAN_PARAMS['min_cluster_size']
-        
-        # Log the parameters being used
-        logger.info(f"Using UMAP parameters: n_neighbors={n_neighbors}, n_components={n_components}, min_dist={min_dist}")
-        logger.info(f"Using HDBSCAN parameters: min_samples={min_samples}, min_cluster_size={min_cluster_size}")
-        
+                
         # Use CPU based topic model to generate topic model
         umap_model, hdbscan_model = _cpu_topic_model(n_neighbors, n_components, min_dist, min_samples, min_cluster_size)
         
         # Create a BERTopic model instance for this worker
         chunk_model = BERTopic(
+            embedding_model=embedding_model,
             umap_model=umap_model,
             hdbscan_model=hdbscan_model,
-            embedding_model=None,
+            seed_topic_list=gl.SEED_TOPICS,
             calculate_probabilities=False,
+            nr_topics = 'auto',
             verbose=False
         )
-        
-        # Convert any GPU arrays to CPU arrays before parallel processing
-        if hasattr(chunk_embeddings, 'get'):
-            chunk_embeddings = chunk_embeddings.get()
         
         # Fit models
         transformed_embeddings = umap_model.fit_transform(chunk_embeddings)
@@ -112,12 +116,11 @@ def process_chunk_worker(chunk_idx: int, chunk_docs: List[str], chunk_embeddings
             
             retry_umap = UMAP(
                 n_neighbors=5,
-                n_components=75,
+                n_components=50,
                 min_dist=0.0,
                 metric='cosine',
                 random_state=42,
                 verbose=False,
-                low_memory=True,
                 n_jobs=1
             )
             
@@ -173,24 +176,13 @@ def process_chunk_worker(chunk_idx: int, chunk_docs: List[str], chunk_embeddings
                 'embeddings': topic_embeddings
             }
         
-        # Convert any GPU arrays to CPU arrays before updating
-        if chunk_representatives:
-            for topic_key, topic_data in chunk_representatives.items():
-                if 'embeddings' in topic_data:
-                    # Convert GPU arrays to CPU arrays
-                    topic_data['embeddings'] = [emb.get() if hasattr(emb, 'get') else emb for emb in topic_data['embeddings']]
-        
-        # Clear memory if using CUDA
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            
         # Return the representatives for this chunk
         return chunk_representatives
         
     except Exception as e:
         logger.error(f"Worker error processing chunk {chunk_idx+1}: {e}")
         logger.error(traceback.format_exc())
-        return {} 
+        return {}
     
 
 def _cpu_topic_model(n_neighbors, n_components, min_dist, min_samples, min_cluster_size, cluster_selection_epsilon=0.2):
@@ -231,7 +223,6 @@ def _cpu_topic_model(n_neighbors, n_components, min_dist, min_samples, min_clust
 
 def _gpu_topic_model(n_neighbors, n_components, min_dist, min_samples, min_cluster_size, cluster_selection_epsilon=0.2):
     """Create GPU-accelerated UMAP and HDBSCAN models using cuML.
-    
     Args:
         n_neighbors: Number of neighbors for UMAP
         n_components: Number of dimensions for UMAP
@@ -258,6 +249,7 @@ def _gpu_topic_model(n_neighbors, n_components, min_dist, min_samples, min_clust
         min_samples=min_samples,
         min_cluster_size=min_cluster_size,
         metric='euclidean',
-        cluster_selection_epsilon=cluster_selection_epsilon if cluster_selection_epsilon else 0.2  # Default value
+        cluster_selection_epsilon=cluster_selection_epsilon if cluster_selection_epsilon else 0.2,  # Default value
+        allow_single_cluster=False  # Don't allow just one cluster
     )
     return umap_model, hdbscan_model

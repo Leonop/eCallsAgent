@@ -83,34 +83,33 @@ def main() -> None:
                 logger.warning(f"Invalid embedding model index: {args.embedding_model}. Using default.")
         
         # Set up device
-        cuda_ready, device_str, memory_gb = setup_cuda()
+        _, device_str, _ = setup_cuda()
         logger.info(f"Using device: {device_str}")
         
         try:
             # Get absolute path to project root
-            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            project_root = gl.PROJECT_DIR
             file_path = os.path.join(project_root, 'eCallsAgent', 'input_data', 'raw', gl.data_filename)
             
             # Load and preprocess data
             data_handler = DataHandler(file_path, gl.YEAR_START, gl.YEAR_END)
-            docs_path = os.path.join(gl.input_folder, "processed", f'preprocessed_docs_{gl.YEAR_START}_{gl.YEAR_END}.txt')
-            
-            # Create processed directory if it doesn't exist
-            os.makedirs(os.path.dirname(docs_path), exist_ok=True)
-            data_df = data_handler.load_data()
+            processed_docs_path = os.path.join(gl.input_folder, "processed", f'componenttext_{gl.YEAR_START}_{gl.YEAR_END}.txt')
 
-            if os.path.exists(docs_path):
-                logger.info(f"Found preprocessed docs at {docs_path}. Loading...")
-                docs = data_handler.load_doc_parallel(docs_path)
+            if os.path.exists(processed_docs_path):
+                logger.info(f"Found preprocessed docs at {processed_docs_path}. Loading...")
+                docs = data_handler.load_doc_parallel(processed_docs_path)
             else:
                 logger.info("Processed docs not found. Processing raw data...")
-                docs = data_handler.preprocess_text(data_df)
+                data_df = data_handler.load_data() # load the raw data
+                logger.info(f"process duplicate earnings calls {data_df.shape}")
+                docs = data_handler.process_dup_earnings_calls(data_df) # remove duplicate earnings calls
                 os.makedirs(gl.output_folder, exist_ok=True)
-                logger.info(f"Saving processed docs to {docs_path}")
-                with open(docs_path, 'w', encoding='utf-8') as f:
+                logger.info(f"Saving processed docs to {processed_docs_path}")
+                with open(processed_docs_path, 'w', encoding='utf-8') as f:
                     f.write("\n".join(docs))
             
             # Initialize embedding generator
+            logger.info(f"embedding generator initialized")
             embedding_gen = EmbeddingGenerator(device_str)
             
             # Try to load existing embeddings first
@@ -128,9 +127,23 @@ def main() -> None:
                 logger.info("No existing embeddings found. Generating new embeddings...")
                 embeddings = embedding_gen.generate_embeddings(docs)
             
-            # Initialize and train topic model
-            topic_modeler = TopicModeler(device_str)
-            final_model = topic_modeler.train_topic_model(docs, embeddings, use_parallel=True)
+            if not gl.SKIP_GRID_SEARCH:
+                logger.info("Starting grid search to find optimal parameters...")
+                model_evaluator = ModelEvaluator()
+                best_model, best_params = model_evaluator.grid_search(docs, embeddings)
+                
+                if best_model is not None:
+                    logger.info(f"Grid search completed. Best parameters found: {best_params}")
+                    final_model = best_model
+                else:
+                    logger.warning("Grid search failed or found no valid parameters. Using default parameters.")
+                    # Proceed with default topic modeling as before
+                    topic_modeler = TopicModeler(device_str)
+                    final_model = topic_modeler.train_topic_model(docs, embeddings)
+            else:
+                logger.info("Skipping grid search, using default parameters")
+                topic_modeler = TopicModeler(device_str)
+                final_model = topic_modeler.train_topic_model(docs, embeddings)
                                     
             # Map all documents to topics
             logger.info("************** Create topic probabilities CSV **************")
@@ -158,12 +171,22 @@ def main() -> None:
             logger.info(f"Coherence Score: {baseline_coherence:.4f}")
             logger.info(f"Silhouette Score: {baseline_silhouette:.4f}")
             logger.info(f"Number of Topics: {len(set(final_model.topics_)) - 1}")
+            logger.info(f"Mean Topic Confidence Score: {topic_modeler.confidence_topic_score()[0]:.4f}")
+            logger.info(f"Standard Deviation of Topic Confidence Score: {topic_modeler.confidence_topic_score()[1]:.4f}")
             
+            # parameters for the model
+            # final_model_params = topic_modeler._calculate_adaptive_parameters(docs, embeddings)
+            n_neighbors = gl.final_parameters['n_neighbors']
+            n_components = gl.final_parameters['n_components']
+            min_cluster_size = gl.final_parameters['min_cluster_size']
+            min_samples = gl.final_parameters['min_samples']
+            n_topics = topic_modeler.n_topics
+
             # Save the model
             os.makedirs(gl.models_folder, exist_ok=True)
             model_path = os.path.join(
                 gl.models_folder, 
-                f"bertopic_model_{gl.N_NEIGHBORS[0]}_{gl.N_COMPONENTS[0]}_{gl.MIN_CLUSTER_SIZE[0]}_{gl.MIN_SAMPLES[0]}_{gl.N_COMPONENTS[0]}_{gl.N_NEIGHBORS[0]}_{topic_modeler.n_topics}_{gl.YEAR_START}_{gl.YEAR_END}.pkl"
+                f"bertopic_model_{n_neighbors}_{n_components}_{min_cluster_size}_{min_samples}_{n_topics}_{gl.YEAR_START}_{gl.YEAR_END}.pkl"
             )
             final_model.save(model_path)
             logger.info(f"Model saved to {model_path}")

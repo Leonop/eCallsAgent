@@ -29,7 +29,7 @@ class EmbeddingGenerator:
             logger.warning(f"Model index {model_index} out of range. Using default model.")
             model_index = gl.DEFAULT_MODEL_INDEX
             
-        model_name = gl.EMBEDDING_MODELS[model_index]
+        model_name = 'BAAI/bge-large-en-v1.5' #gl.EMBEDDING_MODELS[model_index]
         logger.info(f"Using embedding model: {model_name}")
         self.model_name = model_name
         self.model_index = model_index
@@ -160,20 +160,6 @@ class EmbeddingGenerator:
                 logger.info(f"Loaded compressed embeddings with shape {embeddings.shape}")
                 return embeddings
             
-            # If model-specific embeddings not found, try to load any existing embeddings
-            # as a fallback (older format)
-            legacy_pattern = os.path.join(gl.embeddings_folder, f'embeddings_{year_start}_{year_end}*.npz')
-            legacy_files = glob.glob(legacy_pattern)
-            
-            if legacy_files:
-                backup_path = legacy_files[0]
-                logger.warning(f"Model-specific embeddings not found. Loading legacy embeddings from {backup_path}")
-                data = np.load(backup_path, allow_pickle=True)
-                if 'embeddings' in data:
-                    embeddings = data['embeddings']
-                logger.info(f"Loaded compressed embeddings with shape {embeddings.shape}")
-                return embeddings
-            
             raise FileNotFoundError(f"No embeddings found for model {self.model_name} in {gl.embeddings_folder}")
             
         except Exception as e:
@@ -184,7 +170,12 @@ class EmbeddingGenerator:
         """Generate embeddings using a memory-mapped array for large datasets."""
         start_time = time.time()
         embedding_dim = self.embedding_dim
-        chunk_size = min(8192, len(docs))  # Increase from 512 to 8192
+        
+        # Adjust chunk size based on device
+        is_cuda = "cuda" in self.device.lower()
+        chunk_size = min(8192, len(docs)) if is_cuda else min(64, len(docs))
+        
+        logger.info(f"Generating embeddings on {self.device} with batch size {chunk_size}")
         
         # Make sure the embeddings folder exists
         os.makedirs(gl.embeddings_folder, exist_ok=True)
@@ -204,7 +195,6 @@ class EmbeddingGenerator:
         shape = (len(docs), embedding_dim)
         embeddings = np.memmap(temp_file, dtype=np.float64, mode='w+', shape=shape)
 
-        is_cuda = torch.cuda.is_available()
         logger.info(f"Generating embeddings for {len(docs)} documents using {self.model_name}")
         logger.info(f"Batch size: {chunk_size}, Embedding dimension: {embedding_dim}")
         

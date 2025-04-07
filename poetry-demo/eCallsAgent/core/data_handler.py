@@ -12,7 +12,8 @@ from tqdm import tqdm
 from eCallsAgent.core.preprocess_earningscall import NlpPreProcess
 from eCallsAgent.config import global_options as gl
 import multiprocessing as mp
-import numpy as np
+import numpy as np     
+tqdm.pandas()
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +100,7 @@ class DataHandler:
             logger.error(traceback.format_exc())
             raise
 
-    def preprocess_text(self, data: pd.DataFrame) -> list:
+    def preprocess_text_parallel(self, data: pd.DataFrame) -> list:
         """Preprocess text data efficiently."""
         try:
             # Set up multiprocessing with explicit start method
@@ -118,19 +119,18 @@ class DataHandler:
                         chunksize=chunk_size
                     ),
                     total=len(data),
-                    desc="Preprocessing documents"
+                    desc="Preprocessing documents in parallel"
                 ))
-            
             return docs
         
         except Exception as e:
             logger.error(f"Error in preprocess_text: {e}")
             raise
 
-    def _preprocess_single_doc(self, text: str) -> str:
+    def _preprocess_text(self, df: pd.DataFrame, col: str) -> str:
         """Preprocess a single document."""
         try:
-            return self.nlp_processor.preprocess_file(pd.DataFrame([{'text': text}]), 'text')[0]
+            return self.nlp_processor.preprocess_file(df, col).tolist()
         except Exception as e:
             logger.error(f"Error preprocessing document: {e}")
             return ""
@@ -147,7 +147,7 @@ class DataHandler:
         
         # Filter for years 2011-2014
         filtered_df = df_meta[(df_meta['year'] >= self.year_start) & (df_meta['year'] <= self.year_end)].copy()
-        print(f"Filtered to {len(filtered_df)} documents from {self.year_start}-{self.year_end}")
+        logger.info(f"Filtered to {len(filtered_df)} documents from {self.year_start}-{self.year_end}")
         
         # Create a unique identifier (using transcriptid)
         # You can adjust this if you need a different identifier
@@ -155,10 +155,10 @@ class DataHandler:
         
         # Check if lengths match
         if len(identifiers) != len(topic_modeler.rep_probs):
-            print(f"WARNING: Length mismatch! Identifiers: {len(identifiers)}, Probabilities: {len(topic_modeler.rep_probs)}")
+            logger.info(f"WARNING: Length mismatch! Identifiers: {len(identifiers)}, Probabilities: {len(topic_modeler.rep_probs)}")
             return False
         
-        print(f"Lengths match! Creating CSV with {len(identifiers)} rows")
+        logger.info(f"Lengths match! Creating CSV with {len(identifiers)} rows")
         
         topics, probs = topic_modeler._map_documents(docs, embeddings)
 
@@ -183,6 +183,83 @@ class DataHandler:
         
         # Save to CSV
         result_df.to_csv(output_path, index=False)
-        print(f"Saved topic probabilities to {output_path}")
+        logger.info(f"Saved topic probabilities to {output_path}")
         
         return True
+
+    def process_chunk(self, chunk_df, groupby_cols, rows_to_keep):
+        chunk_result = []
+        chunk_skipped = 0
+        for name, group in chunk_df.groupby(groupby_cols):
+            if group['transcriptcomponenttypename'].iloc[0] in rows_to_keep:
+                first_row = group.iloc[0].copy()
+                first_row['componenttext'] = group['componenttext'].iloc[-1]
+                first_row['transcriptid'] = group['transcriptid'].iloc[0]
+                chunk_result.append(first_row)
+            else:
+                chunk_skipped += 1
+        return chunk_result, chunk_skipped
+        
+    def process_dup_earnings_calls(self, df_input: pd.DataFrame):
+        # Load the data
+        df = df_input
+        logger.info(f"Successfully loaded data with {len(df)} rows")  
+        df['mostimportantdateutc'] = pd.to_datetime(df['mostimportantdateutc'])
+        # 1. Add quarter column based on mostimportantdateutc
+        df['quarter'] = df['mostimportantdateutc'].dt.quarter
+        df['year'] = df['mostimportantdateutc'].dt.year
+        df['componentorder'] = df['componentorder'].astype(int)
+
+        # Sort the dataframe
+        df = df.sort_values(['transcriptid', 'companyid', 'mostimportantdateutc', 'transcriptcomponenttypename', 'componentorder'], ascending=True)
+
+        # Define the grouping columns
+        groupby_cols = ['companyid', 'year', 'quarter', 'transcriptcomponenttypename', 'componentorder']
+        rows_to_keep = ['Presenter Speech', 'Question', 'Answer']
+        
+        # Calculate optimal chunk size - aim for ~100 chunks
+        n_groups = df.groupby(groupby_cols).ngroups
+        n_cores = min(mp.cpu_count(), 16)  # Limit to 16 cores max
+        chunk_size = max(1000, n_groups // (n_cores * 4))  # Ensure reasonable chunk size
+        
+        # Create chunks of the dataframe
+        unique_transcripts = df['transcriptid'].unique()
+        transcript_chunks = np.array_split(unique_transcripts, n_cores * 4)
+        
+        # Process chunks in parallel
+        result = []
+        count_skipped = 0
+        
+        with ProcessPoolExecutor(max_workers=n_cores) as executor:
+            futures = []
+            for transcript_chunk in transcript_chunks:
+                chunk_df = df[df['transcriptid'].isin(transcript_chunk)]
+                futures.append(executor.submit(self.process_chunk, chunk_df, groupby_cols, rows_to_keep))
+            
+            for future in as_completed(futures):
+                chunk_result, chunk_skipped = future.result()
+                result.extend(chunk_result)
+                count_skipped += chunk_skipped
+        
+        logger.info(f"Skipped {count_skipped} rows for not in rows_to_keep")
+        df_unique_calls = pd.DataFrame(result)
+        logger.info(f"There are {len(df_unique_calls)} unique calls")
+        # drop duplicates text
+        df_unique_calls = df_unique_calls.drop_duplicates(subset='componenttext', keep='first')
+        logger.info(f"There are {len(df_unique_calls)} unique calls after dropping duplicates")
+        self.save_data(df_unique_calls, 'transcriptid', 'componenttext', gl.YEAR_START, gl.YEAR_END)
+        return df_unique_calls[gl.TEXT_COLUMN].astype(str).tolist()
+
+    def save_data(self, df: pd.DataFrame, id_name: str, column_name: str, start_year: int, end_year: int):
+        # Create output directory if it doesn't exist
+        os.makedirs(gl.input_folder, exist_ok=True)
+        
+        # Save as proper CSV with both columns
+        output_file = os.path.join(gl.input_folder, 'processed', f'{column_name}_{start_year}_{end_year}.csv')
+        
+        # Create a new DataFrame with just the two columns we want
+        output_df = df[[id_name, column_name]].copy()
+        
+        # Save to CSV with proper header
+        output_df.to_csv(output_file, index=False)
+        logger.info(f"Saved data to {output_file} with {len(output_df)} rows")

@@ -18,7 +18,8 @@ import time
 from typing import Tuple, Dict
 from itertools import product
 from joblib import Memory
-
+from eCallsAgent.core.chunking_utils import _cpu_topic_model, _gpu_topic_model
+from eCallsAgent.core.topic_modeler import TopicModeler as tm
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -27,6 +28,10 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+# initialize topic modeler
+device_str = 'cuda:0'
+tm = tm(device_str)
 
 class ModelEvaluator:
     """Handles model evaluation and parameter tuning."""
@@ -95,6 +100,7 @@ class ModelEvaluator:
             # Convert inputs to numpy arrays and ensure correct types
             embeddings = np.array(embeddings, dtype=np.float32)
             labels = np.array(labels, dtype=np.int32)
+            
             # Ensure embeddings and labels have matching dimensions
             if len(embeddings) != len(labels):
                 logger.warning(f"Dimension mismatch: embeddings {len(embeddings)}, labels {len(labels)}")
@@ -102,6 +108,7 @@ class ModelEvaluator:
                 min_len = min(len(embeddings), len(labels))
                 embeddings = embeddings[:min_len]
                 labels = labels[:min_len]            
+            
             # Debug info
             logger.info(f"Initial labels shape: {labels.shape}, unique labels: {np.unique(labels)}")
             logger.info(f"Initial embeddings shape: {embeddings.shape}")
@@ -114,7 +121,7 @@ class ModelEvaluator:
             if n_valid < 2:
                 logger.warning("Not enough non-noise points for silhouette score")
                 return 0.0
-                
+            
             filtered_embeddings = embeddings[mask]
             filtered_labels = labels[mask]
             
@@ -129,29 +136,51 @@ class ModelEvaluator:
             
             # Use a sample if dataset is too large
             if len(filtered_embeddings) > 10000:
-                indices = np.random.choice(len(filtered_embeddings), 10000, replace=False)
-                filtered_embeddings = filtered_embeddings[indices]
-                filtered_labels = filtered_labels[indices]
-                logger.info(f"Sampled down to 10000 points")
+                # Ensure we get a balanced sample from each cluster
+                sampled_indices = []
+                samples_per_cluster = 10000 // n_clusters
+                
+                for label in unique_labels:
+                    label_indices = np.where(filtered_labels == label)[0]
+                    if len(label_indices) > samples_per_cluster:
+                        sampled_indices.extend(np.random.choice(label_indices, samples_per_cluster, replace=False))
+                    else:
+                        sampled_indices.extend(label_indices)
+                
+                filtered_embeddings = filtered_embeddings[sampled_indices]
+                filtered_labels = filtered_labels[sampled_indices]
+                logger.info(f"Sampled down to {len(filtered_embeddings)} points")
             
             # Ensure we have enough samples per label
             label_counts = np.bincount(filtered_labels)
             min_samples = np.min(label_counts[label_counts > 0])
-            logger.info(f"Samples per cluster - min: {min_samples}, max: {np.max(label_counts)}")
+            max_samples = np.max(label_counts)
+            logger.info(f"Samples per cluster - min: {min_samples}, max: {max_samples}")
             
-            logger.warning("Some clusters have less than 2 samples")
             # Remove clusters with less than 2 samples
             valid_labels = np.where(label_counts >= 2)[0]
+            if len(valid_labels) < 2:
+                logger.warning("Not enough clusters with sufficient samples")
+                return 0.0
+            
             mask = np.isin(filtered_labels, valid_labels)
             filtered_embeddings = filtered_embeddings[mask]
             filtered_labels = filtered_labels[mask]
+            
             # Relabel to ensure consecutive integers
-            label_map = {old: new for new, old in enumerate(filtered_labels)}
+            label_map = {old: new for new, old in enumerate(np.unique(filtered_labels))}
             filtered_labels = np.array([label_map[label] for label in filtered_labels])
+            
             if len(filtered_embeddings) < 2:
                 logger.warning("Not enough samples after filtering small clusters")
                 return 0.0
+            
             logger.info(f"Final data for silhouette: {len(filtered_embeddings)} points, {len(np.unique(filtered_labels))} clusters")
+            
+            # Final check for at least 2 clusters
+            if len(np.unique(filtered_labels)) < 2:
+                logger.warning("Final data has less than 2 clusters")
+                return 0.0
             
             # Compute silhouette score
             score = silhouette_score(
@@ -210,128 +239,101 @@ class ModelEvaluator:
                     for min_dist in param_grid['min_dist']:
                         for min_samples in param_grid['min_samples']:
                             for min_cluster_size in param_grid['min_cluster_size']:
-                                combination_count += 1
-                                logger.info(f"Testing combination {combination_count}/{total_combinations}")
-                                
-                                try:
-                                    # Configure model with current parameters
-                                    umap_model = UMAP(
-                                        n_neighbors=n_neighbors,
-                                        n_components=n_components,
-                                        min_dist=min_dist,
-                                        metric='cosine',
-                                        random_state=42,
-                                        verbose=False,
-                                        n_jobs=1 if torch.cuda.is_available() else -1,
-                                        low_memory=True
-                                    )
+                                for cluster_selection_epsilon in param_grid['cluster_selection_epsilon']:
+                                    combination_count += 1
+                                    logger.info(f"Testing combination {combination_count}/{total_combinations}")
                                     
-                                    hdbscan_model = HDBSCAN(
-                                        min_samples=min_samples,
-                                        min_cluster_size=min_cluster_size,
-                                        metric='euclidean',
-                                        prediction_data=True,
-                                        core_dist_n_jobs=1,
-                                        memory=self.memory,  # Use the initialized memory cache
-                                        algorithm='best'
-                                    )
-                                    
-                                    topic_model = BERTopic(
-                                        umap_model=umap_model,
-                                        hdbscan_model=hdbscan_model,
-                                        calculate_probabilities=False,
-                                        verbose=False,
-                                        seed_topic_list=gl.SEED_TOPICS,
-                                        min_topic_size=gl.OPTIMAL_DOCS_PER_TOPIC
-                                    )
-                                    
-                                    # Train the model
-                                    topic_model.fit(docs, embeddings)
-                                    
-                                    # Count topics (excluding -1 noise topic)
-                                    topics = set(topic_model.topics_)
-                                    if -1 in topics:
-                                        topics.remove(-1)
-                                    n_topics = len(topics)
-                                    
-                                    # Check if the number of topics is in the desired range
-                                    if target_topics_range[0] <= n_topics <= target_topics_range[1]:
-                                        logger.info(f"Valid combination - Topics: {n_topics}")
+                                    try:
+                                        # Configure model with current parameters
                                         
-                                        # Evaluate the model
-                                        coherence_score = self.compute_coherence_score(topic_model, docs)
-                                        silhouette_score = self.compute_silhouette_score(embeddings, topic_model.topics_)
+                                        umap_model, hdbscan_model = _gpu_topic_model(n_neighbors, n_components, min_dist, min_samples, min_cluster_size, cluster_selection_epsilon)
+                                        topic_model = tm.train_topic_model(docs, embeddings, umap_model, hdbscan_model)
                                         
-                                        # Calculate distance to target topics
-                                        target_topics = (target_topics_range[0] + target_topics_range[1]) // 2
-                                        topic_count_score = 1 - abs(n_topics - target_topics) / (target_topics_range[1] - target_topics_range[0])
+                                        # Count topics (excluding -1 noise topic)
+                                        topics = set(topic_model.topics_)
+                                        if -1 in topics:
+                                            topics.remove(-1)
+                                        n_topics = len(topics)
                                         
-                                        # Combined score (weighted)
-                                        combined_score = (
-                                            0.4 * coherence_score +
-                                            0.4 * silhouette_score +
-                                            0.2 * topic_count_score
-                                        )
-                                        
-                                        # Save results
-                                        result = {
-                                            'n_neighbors': n_neighbors,
-                                            'n_components': n_components,
-                                            'min_dist': min_dist,
-                                            'min_samples': min_samples,
-                                            'min_cluster_size': min_cluster_size,
-                                            'coherence_score': coherence_score,
-                                            'silhouette_score': silhouette_score,
-                                            'n_topics': n_topics,
-                                            'topic_count_score': topic_count_score,
-                                            'combined_score': combined_score
-                                        }
-                                        results.append(result)
-                                        
-                                        # Update best model if needed
-                                        if combined_score > best_score:
-                                            best_score = combined_score
-                                            best_model = topic_model
-                                            best_params = {
+                                        # Check if the number of topics is in the desired range
+                                        if target_topics_range[0] <= n_topics <= target_topics_range[1]:
+                                            logger.info(f"Valid combination - Topics: {n_topics}")
+                                            
+                                            # Evaluate the model
+                                            coherence_score = self.compute_coherence_score(topic_model, docs)
+                                            silhouette_score = self.compute_silhouette_score(embeddings, topic_model.topics_)
+                                            
+                                            # Calculate distance to target topics
+                                            target_topics = (target_topics_range[0] + target_topics_range[1]) // 2
+                                            topic_count_score = 1 - abs(n_topics - target_topics) / (target_topics_range[1] - target_topics_range[0])
+                                            
+                                            # Combined score (weighted)
+                                            combined_score = (
+                                                0.5 * coherence_score +
+                                                0.3 * silhouette_score +
+                                                0.2 * topic_count_score
+                                            )
+                                            
+                                            # Save results
+                                            result = {
                                                 'n_neighbors': n_neighbors,
                                                 'n_components': n_components,
                                                 'min_dist': min_dist,
                                                 'min_samples': min_samples,
-                                                'min_cluster_size': min_cluster_size
+                                                'min_cluster_size': min_cluster_size,
+                                                'cluster_selection_epsilon': cluster_selection_epsilon,
+                                                'coherence_score': coherence_score,
+                                                'silhouette_score': silhouette_score,
+                                                'n_topics': n_topics,
+                                                'topic_count_score': topic_count_score,
+                                                'combined_score': combined_score
                                             }
-                                            logger.info(f"New best score: {best_score:.4f} with {n_topics} topics")
-                                    else:
-                                        skipped_combinations += 1
-                                        if n_topics < target_topics_range[0]:
-                                            skipped_reasons['too_few'] += 1
+                                            results.append(result)
+                                            
+                                            # Update best model if needed
+                                            if combined_score > best_score:
+                                                best_score = combined_score
+                                                best_model = topic_model
+                                                best_params = {
+                                                    'n_neighbors': n_neighbors,
+                                                    'n_components': n_components,
+                                                    'min_dist': min_dist,
+                                                    'min_samples': min_samples,
+                                                    'min_cluster_size': min_cluster_size
+                                                }
+                                                logger.info(f"New best score: {best_score:.4f} with {n_topics} topics")
                                         else:
-                                            skipped_reasons['too_many'] += 1
-                                        logger.info(f"Skipping combination - Topics {n_topics} outside target range {target_topics_range}")
+                                            skipped_combinations += 1
+                                            if n_topics < target_topics_range[0]:
+                                                skipped_reasons['too_few'] += 1
+                                            else:
+                                                skipped_reasons['too_many'] += 1
+                                            logger.info(f"Skipping combination - Topics {n_topics} outside target range {target_topics_range}")
+                                            
+                                            # Save minimal info about skipped combinations for analysis
+                                            result = {
+                                                'n_neighbors': n_neighbors,
+                                                'n_components': n_components,
+                                                'min_dist': min_dist,
+                                                'min_samples': min_samples,
+                                                'min_cluster_size': min_cluster_size,
+                                                'n_topics': n_topics,
+                                                'skipped': True
+                                            }
+                                            results.append(result)
                                         
-                                        # Save minimal info about skipped combinations for analysis
-                                        result = {
-                                            'n_neighbors': n_neighbors,
-                                            'n_components': n_components,
-                                            'min_dist': min_dist,
-                                            'min_samples': min_samples,
-                                            'min_cluster_size': min_cluster_size,
-                                            'n_topics': n_topics,
-                                            'skipped': True
-                                        }
-                                        results.append(result)
+                                        # Clean up
+                                        if not best_model or topic_model != best_model:
+                                            del topic_model
+                                            gc.collect()
+                                            if torch.cuda.is_available():
+                                                torch.cuda.empty_cache()
                                     
-                                    # Clean up
-                                    if not best_model or topic_model != best_model:
-                                        del topic_model
-                                        gc.collect()
-                                        if torch.cuda.is_available():
-                                            torch.cuda.empty_cache()
-                                
-                                except Exception as e:
-                                    logger.error(f"Error evaluating parameters: {e}")
-                                    logger.error(traceback.format_exc())
-                                    continue
-            
+                                    except Exception as e:
+                                        logger.error(f"Error evaluating parameters: {e}")
+                                        logger.error(traceback.format_exc())
+                                        continue
+                
             # Save results to CSV
             if results:
                 results_df = pd.DataFrame(results)

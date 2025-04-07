@@ -1,4 +1,5 @@
 import os
+from eCallsAgent import global_options as gl
 
 # Directory locations
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -22,7 +23,7 @@ figure_base_name = f'bertopic_{data_filename}'  # Base name for figure files
 TEMP_EMBEDDINGS = os.path.join(temp_folder, f'{data_filename}_embeddings.mmap')
 TEMP_TOPIC_KEYWORDS = os.path.join(temp_folder, f'{data_filename}_topic_keywords.pkl')
 TEMP_TOPIC_LABELS = os.path.join(temp_folder, f'{data_filename}_topic_labels.json')
-PREPROCESSED_DOCS = os.path.join(output_folder, f'preprocessed_docs_{data_filename}.txt')
+PREPROCESSED_DOCS = os.path.join(gl.input_folder, "processed", f'processed_docs_{gl.YEAR_START}_{gl.YEAR_END}.txt')
 
 # Model output paths
 MODEL_SCORES = os.path.join(output_folder, "model_scores.txt")

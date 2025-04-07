@@ -16,13 +16,16 @@ from bertopic import BERTopic
 from sentence_transformers import SentenceTransformer
 from eCallsAgent.utils.openai_compat import create_openai_client, create_completion
 from eCallsAgent.core.chunking_utils import _cpu_topic_model, _gpu_topic_model
+from eCallsAgent.core.visualization import TopicVis
+from eCallsAgent.core.chunking_utils import process_chunk_worker, CUML_AVAILABLE  # Add CUML_AVAILABLE import
+from eCallsAgent.utils.cuda_setup import setup_cuda, check_cuml_availability 
+from eCallsAgent.config import global_options as gl # global settings
 import json
 import pickle
 import gc
 import pandas as pd
 import csv
 import matplotlib.pyplot as plt
-from eCallsAgent.core.model_eval import ModelEvaluator
 import sys  # Added for system debugging
 from openai import OpenAI
 import plotly.graph_objects as go
@@ -31,14 +34,10 @@ from collections import Counter
 import random
 from datetime import datetime
 import plotly.io as pio
-import os
 from multiprocessing import Pool, cpu_count
+import importlib.util
+import subprocess
 
-import numpy as np
-from eCallsAgent.core.visualization import TopicVis
-from eCallsAgent.core.chunking_utils import process_chunk_worker, CUML_AVAILABLE  # Add CUML_AVAILABLE import
-from eCallsAgent.utils.cuda_setup import setup_cuda, check_cuml_availability 
-from eCallsAgent.config import global_options as gl # global settings
 # Configure Numba and CUDA logger levels
 ENABLE_NUMBA_CUDA = os.environ.get('ENABLE_NUMBA_CUDA', 'True').lower() in ('true', '1', 't')
 numba_logger = logging.getLogger('numba.cuda.cudadrv.driver')
@@ -71,10 +70,7 @@ if CUML_AVAILABLE and CUDA_READY:
 # Add this near the top of the file, after other imports
 logger = logging.getLogger("eCallsAgent.core.topic_modeler")
 
-try:
-    import importlib.util
-    import subprocess
-    
+try:    
     # Log system information
     logger.info(f"Python version: {sys.version}")
     logger.info(f"Python executable: {sys.executable}")
@@ -121,14 +117,15 @@ class TopicModeler:
             MAX_ADAPTIVE_REPRESENTATIVES,
             SEED_TOPICS
         )
+        self.cuda_ready = CUDA_READY
+        self.cuda_device = CUDA_DEVICE
+        self.cuda_memory = CUDA_MEMORY
         
         # Set embedding model selection
         self.pre_trained_model_name = "BAAI/bge-large-en-v1.5"
         self.embedding_model = SentenceTransformer(self.pre_trained_model_name)
         # Store seed topics
-        self.seed_topics = SEED_TOPICS
-        self.seed_topic_embeddings = self.embed_seed_topics()
-        # Store parameters for UMAP 
+        self.seed_topics = SEED_TOPICS        # Store parameters for UMAP 
         self.n_neighbors = N_NEIGHBORS
         self.n_components = N_COMPONENTS
         self.min_dist = MIN_DIST
@@ -170,9 +167,6 @@ class TopicModeler:
         # Add default value for n_topics
         self.n_topics = gl.NR_TOPICS[0]
         
-        # Initialize model evaluator
-        self.model_evaluator = ModelEvaluator()
-
         # Initialize topic model
         self.topic_model = None
         
@@ -572,28 +566,18 @@ class TopicModeler:
             self.logger.info(f"Embeddings converted, shape: {all_rep_embeddings.shape}")
 
             # Get adaptive parameters
-            self.adaptive_parameters = self._calculate_adaptive_parameters(all_rep_docs, all_rep_embeddings)
+            # self.adaptive_parameters = self._calculate_adaptive_parameters(all_rep_docs, all_rep_embeddings)
             
             # Use adaptive parameters if available
-            if hasattr(self, 'adaptive_parameters'):
-                n_neighbors = self.adaptive_parameters["n_neighbors"]
-                n_components = self.adaptive_parameters["n_components"]
-                min_dist = self.adaptive_parameters["min_dist"]
-                min_cluster_size = self.adaptive_parameters["min_cluster_size"]
-                min_samples = self.adaptive_parameters["min_samples"]
-                cluster_selection_epsilon = self.adaptive_parameters["cluster_selection_epsilon"]
-                
-                self.logger.info(f"Using adaptive parameters for earnings call analysis:")
-            else:
-                # Fallback to default parameters
-                n_neighbors = gl.N_NEIGHBORS[0] if hasattr(gl, 'N_NEIGHBORS') and gl.N_NEIGHBORS else 15
-                n_components = gl.N_COMPONENTS[0] if hasattr(gl, 'N_COMPONENTS') and gl.N_COMPONENTS else 5
-                min_dist = 0.1
-                min_cluster_size = gl.MIN_CLUSTER_SIZE[0] if hasattr(gl, 'MIN_CLUSTER_SIZE') and gl.MIN_CLUSTER_SIZE else 10
-                min_samples = max(3, min_cluster_size // 5)
-                cluster_selection_epsilon = 0.2
-                
-                self.logger.info(f"Using default parameters (adaptive parameters not available):")
+            n_neighbors = gl.final_parameters["n_neighbors"]
+            n_components = gl.final_parameters["n_components"]
+            min_dist = gl.final_parameters["min_dist"]
+            min_cluster_size = gl.final_parameters["min_cluster_size"]
+            min_samples = gl.final_parameters["min_samples"]
+            cluster_selection_epsilon = gl.final_parameters["cluster_selection_epsilon"]
+            
+       
+            self.logger.info(f"Using default parameters (adaptive parameters not available):")
             
             self.logger.info(f"  - n_neighbors: {n_neighbors}")
             self.logger.info(f"  - n_components: {n_components}")
@@ -610,7 +594,7 @@ class TopicModeler:
 
             # Create the topic model with or without seed topics
             topic_model = self._create_topic_model(umap_model, hdbscan_model)
-            topic_model.verbose = True
+            topic_model.verbose = False
             
             # Fit the model
             self.logger.info("Fitting topic model to representative documents...")
@@ -1229,7 +1213,7 @@ class TopicModeler:
             # Save to CSV
             output_path = os.path.join(
                 gl.output_folder, 
-                f"topic_keywords_{gl.N_NEIGHBORS[0]}_{gl.N_COMPONENTS[0]}_{gl.MIN_CLUSTER_SIZE[0]}_{self.n_topics}_{gl.YEAR_START}_{gl.YEAR_END}.csv"
+                f"topic_keywords_{gl.final_parameters['n_neighbors']}_{gl.final_parameters['n_components']}_{gl.final_parameters['min_cluster_size']}_{self.n_topics}_{gl.YEAR_START}_{gl.YEAR_END}.csv"
             )
             topic_info.to_csv(output_path, index=False)
             self.logger.info(f"Saved topic keywords with labels to {output_path}")
@@ -1407,7 +1391,7 @@ class TopicModeler:
     def _create_topic_model(self, umap_model=None, hdbscan_model=None, _cpu = False):
         """Create a topic model with the specified UMAP and HDBSCAN models."""
         try:
-            params = self.adaptive_parameters
+            params = gl.final_parameters
             
             self.logger.info(f"Using parameters for topic model:")
             self.logger.info(f"  n_neighbors: {params['n_neighbors']}")
@@ -1434,7 +1418,7 @@ class TopicModeler:
                 try:
                     # Create the BERTopic model with the chosen models
                     topic_model = BERTopic(
-                        embedding_model=self.embedding_model,
+                    embedding_model=self.embedding_model,
                     umap_model=umap_model,
                     hdbscan_model=hdbscan_model,
                     vectorizer_model=vectorizer_model,
@@ -1442,7 +1426,7 @@ class TopicModeler:
                     seed_topic_list=self.seed_topics,
                     top_n_words=gl.TOP_N_WORDS[0],
                     calculate_probabilities=False,
-                    verbose=True
+                    verbose=False
                     )
                 except Exception as e:                 # Create the BERTopic model with the chosen models
                     topic_model = BERTopic(
@@ -1454,7 +1438,7 @@ class TopicModeler:
                         seed_topic_list=None,
                         top_n_words=gl.TOP_N_WORDS[0],
                         calculate_probabilities=False,
-                        verbose=True
+                        verbose=False
                         )
             return topic_model
         
@@ -1542,14 +1526,6 @@ class TopicModeler:
                 # Use all docs if less than MAX_DOCS_PER_TOPIC (300), otherwise limit to 300
                 max_docs_to_store = min(gl.MAX_DOCS_PER_TOPIC, len(doc_indices))
                 
-                # # Calculate how many documents we'll store for this topic
-                # if len(doc_indices) <= gl.MAX_DOCS_PER_TOPIC:
-                #     # Using all documents (between 50 and 300)
-                #     self.logger.debug(f"Topic {topic_id}: Using all {len(doc_indices)} documents")
-                # else:
-                #     # Limiting to MAX_DOCS_PER_TOPIC (300)
-                #     self.logger.debug(f"Topic {topic_id}: Limiting from {len(doc_indices)} to {max_docs_to_store} documents")
-                
                 doc_indices = doc_indices[:max_docs_to_store]
                 
                 # Collect documents and embeddings
@@ -1626,7 +1602,7 @@ class TopicModeler:
                 
                 # Add chunk parameters
                 chunk_params.append((i, chunk_docs, chunk_embeddings, n_chunks, 
-                                     None, None,  _cpu))
+                                     None,  _cpu))
             
             # Use CPU-optimized process pool with spawn method
             n_workers = min(cpu_count(), 16)  # Limit to 16 workers for CPU processing
@@ -1729,7 +1705,7 @@ class TopicModeler:
                     
                     # Assign batch size based on available GPU memory
                     if gpu_mem_total > 16:  # High-end GPUs
-                        batch_size = 8000
+                        batch_size = 10000
                     elif gpu_mem_total > 8:  # Mid-range GPUs
                         batch_size = 5000
                     elif gpu_mem_total > 4:  # Entry-level GPUs
@@ -1737,7 +1713,7 @@ class TopicModeler:
                     else:  # Very limited GPUs
                         batch_size = 2000
                         
-                    self.logger.info(f"GPU memory: {gpu_mem_total:.2f} GB, allocating batch size of {batch_size}")
+                    self.logger.info(f"GPU memory: {gpu_mem_total:.2f} GB, allocating batch size of {batch_size}, remaining memory: {gpu_mem_available:.2f} GB ")
                     
                 except Exception as e:
                     self.logger.warning(f"Error determining GPU memory, using default batch size {batch_size}: {e}")
@@ -1756,7 +1732,7 @@ class TopicModeler:
                     elif num_cores <= 16:
                         batch_size = 3000
                     else:  # High-core systems
-                        batch_size = 4000
+                        batch_size = 6000
                         
                     self.logger.info(f"CPU cores: {num_cores}, allocating batch size of {batch_size}")
                     
@@ -1785,67 +1761,60 @@ class TopicModeler:
         # Document length analysis
         avg_doc_length = sum(len(doc.split()) for doc in docs[:1000]) / min(corpus_size, 1000) if corpus_size > 0 else 0
         
-        # OPTIMIZED: Parameters for approximately 100 high-quality topics
+        # OPTIMIZED: Parameters for less strict clustering to reduce noise points
         if corpus_size < 5000:
-            min_cluster_size = 5  # Very small for small datasets
-            min_samples = 3
+            min_cluster_size = 3  # Very small for small datasets
+            min_samples = 2
         elif corpus_size < 50000:
-            min_cluster_size = 10  # Small for medium datasets
-            min_samples = 3
+            min_cluster_size = 5  # Small for medium datasets
+            min_samples = 2
         elif corpus_size < 200000:
-            min_cluster_size = 15  # Medium for large datasets
+            min_cluster_size = 10  # Medium for large datasets
             min_samples = 3
         else:
-            min_cluster_size = 30  # Larger for very large datasets
-            min_samples = 5
+            min_cluster_size = 15  # Smaller value for very large datasets
+            min_samples = 3  # Reduced from 5 to be less strict
         
-        # Increase n_components for better topic separation
+        # Increase n_components for better topic separation but keep n_neighbors low for more local structure
         if embedding_dim <= 384:  # Small embedding models
-            n_components = 50  # Increased from // 4
-            n_neighbors = max(10, min(25, corpus_size // 800))  # Smaller for finer structure
+            n_components = 75  # Increased for better separation
+            n_neighbors = max(8, min(20, corpus_size // 1000))  # Smaller for more local structure
         elif embedding_dim <= 768:  # Medium embedding models
-            n_components = 75  # Increased from // 8
-            n_neighbors = max(12, min(30, corpus_size // 600))  # Smaller for finer structure
-        else:  # Large embedding models
-            n_components = 100  # Increased from // 10
-            n_neighbors = max(25, min(10, corpus_size // 6000))  # Smaller for finer structure
+            n_components = 200  # Increased for better separation
+            n_neighbors = max(10, min(25, corpus_size // 800))  # Smaller for more local structure
+        else:  # Large embedding models (1024 in your case)
+            n_components = 400  # Increased from 150 to capture more subtle differences
+            n_neighbors = max(12, min(10, corpus_size // 8000))  # Reduced for more local structure
         
         # ADJUSTED: Set min_dist based on document length - using smaller values for tighter clusters
         if avg_doc_length < 50:  # Short documents
-            min_dist = max(0.05, min(0.2, avg_doc_length // 500))  # Reduced from 0.05 - tighter clustering
+            min_dist = 0.0  # Minimum value for tightest clustering
         elif avg_doc_length < 200:  # Medium documents
-            min_dist = max(0.15, min(0.2, avg_doc_length // 500))  # Reduced from 0.1 - tighter clustering
+            min_dist = 0.05  # Very small for tight clustering
         else:  # Long documents
-            min_dist = min(0.05, avg_doc_length // 500)  # Reduced from 0.3 - tighter clustering
+            min_dist = 0.05  # Still relatively small
         
-        # ADJUSTED: Decrease epsilon for more precise cluster boundaries
-        cluster_selection_epsilon = 0.01  # Reduced from 0.2
+        # ADJUSTED: Increase epsilon for more lenient cluster boundaries
+        cluster_selection_epsilon = 0.05  # Increased from 0.05 to be more lenient
         if corpus_size > 20000:
-            # For very large corpora, keep epsilon lower to generate more topics
-            cluster_selection_epsilon = 0.05  # Reduced from 0.25
+            # For very large corpora, increase epsilon further
+            cluster_selection_epsilon = 0.01  # Increased to be even more lenient
 
-            # A100-specific optimizations
+        # A100-specific optimizations
         if torch.cuda.is_available():
             gpu_props = torch.cuda.get_device_properties(0)
             if "A100" in gpu_props.name:
                 # Allow more aggressive parameters for A100
-                n_components = min(50, n_components * 1.5)
-                min_cluster_size = max(30, min_cluster_size)
+                n_components = min(500, n_components * 1.5)  # Increased for better separation
+                min_cluster_size = max(20, min_cluster_size)  # Reduced to allow smaller clusters
             
-        self.logger.info(f"Optimized parameters for approximately 100 high-quality topics:")
+        self.logger.info(f"Optimized parameters for reducing noise points:")
         self.logger.info(f"  - min_cluster_size: {min_cluster_size}")
         self.logger.info(f"  - min_samples: {min_samples}")
         self.logger.info(f"  - cluster_selection_epsilon: {cluster_selection_epsilon}")
         self.logger.info(f"  - n_components: {n_components}")
         self.logger.info(f"  - n_neighbors: {n_neighbors}")
         self.logger.info(f"  - min_dist: {min_dist}")
-        # update the parameters in init with the new parameters
-        self.n_neighbors = n_neighbors
-        self.n_components = n_components
-        self.min_cluster_size = min_cluster_size
-        self.min_samples = min_samples
-        self.cluster_selection_epsilon = cluster_selection_epsilon
-        self.embedding_dim = embedding_dim
         
         # Return parameters
         return {
@@ -1876,14 +1845,22 @@ class TopicModeler:
             # Create a new dictionary with the desired format
             converted_labels = {}
             for topic_id, label in custom_labels.items():
-                topic_label = label['topic_label']
-                subtopic_label = label['subtopic_label']
+                # Handle both lowercase and uppercase key variations
+                topic_label = label.get('Topic_Label') or label.get('topic_label')
+                subtopic_label = label.get('Subtopic_Label') or label.get('subtopic_label')
+                
+                # Skip if we don't have both labels
+                if not topic_label or not subtopic_label:
+                    self.logger.warning(f"Missing labels for topic {topic_id}: {label}")
+                    continue
+                    
                 custom_label = f"{topic_label}_{subtopic_label}"
-                converted_labels[topic_id] = custom_label
+                converted_labels[int(topic_id)] = custom_label
             return converted_labels
         except Exception as e:
             self.logger.error(f"Error converting custom labels: {e}")
-            return None
+            self.logger.error(traceback.format_exc())
+            return {}
         
     def confidence_topic_score(self):
         """Calculate the mean confidence score of all topics."""
@@ -2046,119 +2023,3 @@ class TopicModeler:
         
         self.logger.info(f"Topics remapped. Original count: {len(all_topics)}, New count: {len(valid_topics)}")
         return topic_model
-
-
-    # def _create_chunk_model(self, chunk_size: int = None) -> BERTopic:
-    #     """Create optimized model for chunk processing"""
-    #     # If chunk_size is not provided, calculate it
-    #     if chunk_size is None:
-    #         chunk_size = self._calculate_optimal_batch_size()
-    #         self.logger.info(f"No chunk size provided, using calculated optimal size: {chunk_size}")
-        
-    #     # Use optimal parameters from grid search results
-    #     n_neighbors = 5       # Grid search optimal value
-    #     n_components = 50     # Grid search optimal value
-    #     min_dist = 0.0        # Grid search optimal value
-    #     min_samples = 5       # Grid search optimal value
-    #     min_cluster_size = 30 # Grid search optimal value
-        
-    #     self.logger.info(f"Using grid search optimal parameters: n_neighbors={n_neighbors}, n_components={n_components}, min_dist={min_dist}")
-    #     self.logger.info(f"HDBSCAN parameters: min_cluster_size={min_cluster_size}, min_samples={min_samples}")
-    #     self.logger.info(f"Creating chunk model with chunk size: {chunk_size}")
-        
-    #     return BERTopic(
-    #         umap_model=UMAP(
-    #             n_neighbors=n_neighbors,
-    #             n_components=n_components,
-    #             min_dist=min_dist,
-    #             metric='cosine',
-    #             random_state=42,
-    #             verbose=False,
-    #             low_memory=False,
-    #             n_jobs=-1
-    #         ),
-    #         hdbscan_model=HDBSCAN(
-    #             min_samples=min_samples,
-    #             min_cluster_size=min_cluster_size,
-    #             metric='euclidean',
-    #             cluster_selection_method='eom',
-    #             prediction_data=True,
-    #             core_dist_n_jobs=-1
-    #         ),
-    #         embedding_model=None,  # Set to None since we're using pre-computed embeddings
-    #         calculate_probabilities=False,
-    #         verbose=False
-    #     )
-
-
-# def _detect_quarterly_patterns(self, docs: list) -> bool:
-#         """
-#         Detect quarterly reporting patterns in earnings call documents.
-        
-#         Args:
-#             docs: List of documents (earnings call transcripts)
-            
-#         Returns:
-#             Boolean indicating if quarterly patterns were detected
-#         """
-#         # Simple check for quarterly terms in the documents
-#         quarterly_terms = ["Q1", "Q2", "Q3", "Q4", "first quarter", "second quarter", 
-#                         "third quarter", "fourth quarter", "quarterly", "year-over-year",
-#                         "year over year", "YoY", "quarter-over-quarter", "QoQ"]
-        
-#         # Sample a subset of documents for efficiency
-#         sample_size = min(100, len(docs))
-#         sample_docs = random.sample(docs, sample_size) if len(docs) > sample_size else docs
-        
-#         # Count documents with quarterly terms
-#         docs_with_quarterly_terms = 0
-#         for doc in sample_docs:
-#             if any(term in doc for term in quarterly_terms):
-#                 docs_with_quarterly_terms += 1
-        
-#         # Calculate percentage of documents with quarterly terms
-#         quarterly_percentage = docs_with_quarterly_terms / len(sample_docs) if sample_docs else 0
-        
-#         # Return True if a significant percentage of documents contain quarterly terms
-#         return quarterly_percentage > 0.3
-    
-#     def _detect_industry_clusters(self, docs: list) -> list:
-#         """
-#         Detect potential industry-specific clusters in earnings call documents.
-        
-#         Args:
-#             docs: List of documents (earnings call transcripts)
-            
-#         Returns:
-#             List of potential industry clusters
-#         """
-#         # Industry-specific terms dictionary
-#         industry_terms = {
-#             "technology": ["software", "hardware", "tech", "digital", "cloud", "AI", "artificial intelligence"],
-#             "finance": ["banking", "investment", "financial", "asset", "portfolio", "loan", "deposit"],
-#             "healthcare": ["medical", "pharma", "healthcare", "patient", "clinical", "drug", "therapeutic"],
-#             "energy": ["oil", "gas", "energy", "renewable", "solar", "wind", "fossil", "petroleum"],
-#             "retail": ["retail", "e-commerce", "store", "consumer", "merchandise", "inventory", "sales"],
-#             "manufacturing": ["manufacturing", "factory", "production", "supply chain", "industrial"],
-#             "real_estate": ["property", "real estate", "lease", "rental", "mortgage", "construction"]
-#         }
-        
-#         # Sample a subset of documents for efficiency
-#         sample_size = min(200, len(docs))
-#         sample_docs = random.sample(docs, sample_size) if len(docs) > sample_size else docs
-        
-#         # Count industry term occurrences
-#         industry_counts = {industry: 0 for industry in industry_terms}
-#         for doc in sample_docs:
-#             doc_lower = doc.lower()
-#             for industry, terms in industry_terms.items():
-#                 if any(term.lower() in doc_lower for term in terms):
-#                     industry_counts[industry] += 1
-        
-#         # Calculate percentages
-#         industry_percentages = {industry: count / len(sample_docs) for industry, count in industry_counts.items()}
-        
-#         # Identify significant industries (present in at least 20% of documents)
-#         significant_industries = [industry for industry, percentage in industry_percentages.items() 
-#                             if percentage > 0.2]        
-#         return significant_industries

@@ -15,25 +15,8 @@ from bertopic import BERTopic
 from typing import List, Dict, Optional, Any
 import inspect
 import pickle
+from eCallsAgent.config import global_options as gl
 
-# Global options – if available
-try:
-    from eCallsAgent.config import global_options as gl
-except ImportError:
-    class GlobalOptions:
-        def __init__(self):
-            self.VISUALIZATION_DIR = "visualizations"
-            self.FIGURE_WIDTH = 1200
-            self.FIGURE_HEIGHT = 800
-            self.COLORSCALE = "Viridis"
-            self.figures_folder = "figures"
-            self.output_folder = "output"
-            self.N_NEIGHBORS = [15]
-            self.N_COMPONENTS = [5]
-            self.MIN_CLUSTER_SIZE = [10]
-            self.YEAR_START = 2011
-            self.YEAR_END = 2014
-    gl = GlobalOptions()
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -76,7 +59,7 @@ class TopicVis:
         """Save a Plotly figure as HTML and PNG."""
         try:
             os.makedirs(self.figures_folder, exist_ok=True)
-            formatted_name = f"{filename}_{gl.N_NEIGHBORS[0]}_{gl.N_COMPONENTS[0]}_{gl.MIN_CLUSTER_SIZE[0]}"
+            formatted_name = f"{filename}_{gl.final_parameters['n_neighbors']}_{gl.final_parameters['n_components']}_{gl.final_parameters['min_cluster_size']}"
             if self.n_topics is not None:
                 formatted_name += f"_{self.n_topics}"
             if hasattr(gl, 'YEAR_START') and hasattr(gl, 'YEAR_END'):
@@ -301,7 +284,7 @@ class TopicVis:
             width=base_config['width'],
             height=base_config['height'],
             color_threshold=1.0,
-            orientation='left'
+            orientation='bottom'
         )
         
         # Update layout with specific hierarchy settings
@@ -310,11 +293,12 @@ class TopicVis:
             'showlegend': False,
             'margin': dict(l=200, r=200, t=100, b=100)
         })
+
         fig.update_layout(**hierarchy_config)
         
         # Update trace properties
         fig.update_traces(
-            textfont=dict(size=10, family='Arial')
+            textfont=dict(size=6, family='Times New Roman')
         )
         
         self.save_figure(fig, 'hierarchy', scale=2)
