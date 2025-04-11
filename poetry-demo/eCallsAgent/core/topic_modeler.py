@@ -122,7 +122,8 @@ class TopicModeler:
         self.cuda_memory = CUDA_MEMORY
         
         # Set embedding model selection
-        self.pre_trained_model_name = "BAAI/bge-large-en-v1.5"
+        self.embedding_model_index = gl.DEFAULT_MODEL_INDEX
+        self.pre_trained_model_name = gl.EMBEDDING_MODELS[self.embedding_model_index]
         self.embedding_model = SentenceTransformer(self.pre_trained_model_name)
         # Store seed topics
         self.seed_topics = SEED_TOPICS        # Store parameters for UMAP 
@@ -1669,7 +1670,7 @@ class TopicModeler:
             self.logger.info(f"CUDA Memory: {gpu_mem_gb:.2f} GB")
             
             # Adjust batch size based on model size and GPU memory
-            if 'large' in self.pre_trained_model_name or 'bge' in self.pre_trained_model_name:
+            if 'large' in self.pre_trained_model_name or 'bge' in self.pre_trained_model_name or 'gte' in self.pre_trained_model_name:
                 # For larger models like BGE-large, gte-large, etc.
                 if gpu_mem_gb > 35:  # A100 40GB or similar
                     self.base_batch_size = 384

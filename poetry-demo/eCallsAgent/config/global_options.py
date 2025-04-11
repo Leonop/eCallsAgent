@@ -66,12 +66,12 @@ GPU_CHUNK_SIZE = 5000
 EMBEDDING_DIM = 1024
 
 final_parameters = {
-    "n_neighbors": 15,                    # max(12, min(10, 1_000_000 // 8000)) = max(12, 10) = 12
+    "n_neighbors": 10,                    # max(12, min(10, 1_000_000 // 8000)) = max(12, 10) = 12
     "n_components": 300,                  # adjusted for large embedding + not A100 (see below)
-    "min_dist": 0.06,                     # assuming average doc length < 200
-    "min_cluster_size": 18,              # Reduces over-fragmentation; encourages merging noisy small clusters.
-    "min_samples": 20,                    # relaxed for more clusters
-    "cluster_selection_epsilon": 0.05,   # increased slightly for broader clusters
+    "min_dist": 0.025,                     # assuming average doc length < 200
+    "min_cluster_size": 5,              # Reduces over-fragmentation; encourages merging noisy small clusters.
+    "min_samples": 3,                    # relaxed for more clusters
+    "cluster_selection_epsilon": 0.015,   # increased slightly for broader clusters
 }
 
 # HDBSCAN clustering parameters
@@ -89,6 +89,8 @@ METRIC = ['cosine']
 EMBEDDING_MODELS = [
     'sentence-transformers/all-mpnet-base-v2',   # Original model (good general purpose)
     'BAAI/bge-large-en-v1.5',                    # Better for retrieval and similarity (1024 dimensions)
+    'openai/text-embedding-ada-002', 
+    'meta-llama/Llama-2-7b-chat-hf',
     'thenlper/gte-large',                        # Large model with excellent semantic understanding (1024 dimensions) 
     'intfloat/e5-large-v2',                      # Large model with strong performance (768 dimensions)
     'ProsusAI/finbert',                          # Finance-specific BERT model
@@ -98,10 +100,10 @@ EMBEDDING_MODELS = [
 
 # Default model index to use (0 = original model, 1-6 = enhanced models)
 # Change this value to use a different model
-DEFAULT_MODEL_INDEX = 1  # Updated to use BAAI/bge-large-en-v1.5
+DEFAULT_MODEL_INDEX = 4  # Updated to use thenlper/gte-large
 
 # Parameters for Phase 2: Topic Modeling Distillation
-MAX_ADAPTIVE_REPRESENTATIVES = 500_000 # Maximum number of adaptive representative documents to use for distillation in phase 2. 
+MAX_ADAPTIVE_REPRESENTATIVES = 600_000 # Maximum number of adaptive representative documents to use for distillation in phase 2. 
 MIN_DOCS_PER_TOPIC = 10 # Minimum number of documents per topic to use for distillation
 MAX_DOCS_PER_TOPIC = 5000 # Maximum number of documents per topic to use for distillation
 
@@ -131,11 +133,9 @@ data_filename_prefix = 'Attn'  # Base filename for the data
 figure_base_name = f'bertopic_{data_filename}'  # Base name for figure files
 
 # Temporary file paths
-TEMP_EMBEDDINGS = os.path.join(embeddings_folder, f'{data_filename_prefix}_embeddings.mmap') # good for large emebeddings   
+TEMP_EMBEDDINGS = os.path.join(embeddings_folder, f'{data_filename_prefix}_embeddings_{EMBEDDING_MODELS[DEFAULT_MODEL_INDEX].replace("/", "-").replace(" ", "_")}.mmap') # good for large emebeddings   
 TEMP_TOPIC_KEYWORDS = os.path.join(temp_folder, f'{data_filename_prefix}_topic_keywords.pkl')
 TEMP_TOPIC_LABELS = os.path.join(temp_folder, f'{data_filename_prefix}_topic_labels.json')
-
-
 
 # SAVE RESULTS 
 SAVE_RESULTS_COLS = ["params", "score", "probability"]

@@ -21,15 +21,11 @@ class EmbeddingGenerator:
     def __init__(self, device: str, model_index: int = None):
         self.device = device
         
-        # Use selected model or default
-        if model_index is None:
-            model_index = gl.DEFAULT_MODEL_INDEX
-        
         if model_index >= len(gl.EMBEDDING_MODELS):
             logger.warning(f"Model index {model_index} out of range. Using default model.")
             model_index = gl.DEFAULT_MODEL_INDEX
             
-        model_name = 'BAAI/bge-large-en-v1.5' #gl.EMBEDDING_MODELS[model_index]
+        model_name = gl.EMBEDDING_MODELS[model_index]     #gl.EMBEDDING_MODELS[model_index]
         logger.info(f"Using embedding model: {model_name}")
         self.model_name = model_name
         self.model_index = model_index
@@ -140,7 +136,7 @@ class EmbeddingGenerator:
             # Look for files matching the pattern with dimensions included
             pattern = os.path.join(
                 gl.embeddings_folder, 
-                f'embeddings_{year_start}_{year_end}_{model_key}_*.npz'
+                f'embeddings_{year_start}_{year_end}_{model_key}.npz'
             )
             matching_files = glob.glob(pattern)
             
@@ -160,7 +156,7 @@ class EmbeddingGenerator:
                 logger.info(f"Loaded compressed embeddings with shape {embeddings.shape}")
                 return embeddings
             
-            raise FileNotFoundError(f"No embeddings found for model {self.model_name} in {gl.embeddings_folder}")
+            raise FileNotFoundError(f"No embeddings found for model {model_key} in {gl.embeddings_folder}")
             
         except Exception as e:
             logger.error(f"Error loading embeddings: {e}")
@@ -263,7 +259,23 @@ class EmbeddingGenerator:
             self.save_embeddings(final_embeddings, gl.YEAR_START, gl.YEAR_END)
             logger.info("Embeddings saved for future use")
             
-            # Return the final embeddings
+            # Right before the final return statement
+            temp_dir = os.path.dirname(gl.TEMP_EMBEDDINGS)
+            if not os.path.exists(temp_dir):
+                os.makedirs(temp_dir, exist_ok=True)
+                logger.info(f"Created directory: {temp_dir}")
+
+            # Also verify the file exists before trying to return it
+            if not os.path.exists(gl.TEMP_EMBEDDINGS):
+                logger.warning(f"Memory-mapped file not found at {gl.TEMP_EMBEDDINGS}, returning from .npz instead")
+                # Load from the npz file we just saved
+                model_key = self.model_name.replace('/', '-').replace(' ', '_')
+                file_path = os.path.join(gl.embeddings_folder, 
+                                       f'embeddings_{gl.YEAR_START}_{gl.YEAR_END}_{model_key}.npz')
+                saved_data = np.load(file_path)
+                return saved_data['embeddings']
+
+            # Now try to return the memory-mapped file
             return np.memmap(gl.TEMP_EMBEDDINGS, dtype=np.float64, mode='r', shape=shape)
             
         except Exception as e:

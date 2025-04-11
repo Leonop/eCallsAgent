@@ -118,6 +118,8 @@ class TopicVis:
                 self.logger.warning("Using random coordinates (no topic_embeddings_ found)")
             fig = go.Figure()
             for topic_id, label in self.custom_labels.items():
+                if topic_id == 0:
+                    continue
                 if topic_id >= 0 and topic_id < len(topic_coords):
                     fig.add_trace(go.Scatter(
                         x=[topic_coords[topic_id, 0]],
@@ -125,7 +127,7 @@ class TopicVis:
                         mode='markers+text',
                         marker=dict(
                             size=15,
-                            color=f'hsl({(topic_id * 50) % 360}, 80%, 50%)',
+                            color=f'hsl({(120 + (topic_id * 50)) % 360}, 80%, 50%)',
                             line=dict(width=1, color='white')
                         ),
                         text=[label],

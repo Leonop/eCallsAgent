@@ -22,6 +22,7 @@ from nltk.stem.snowball import SnowballStemmer
 from nltk.corpus import wordnet
 from tqdm import tqdm
 import numpy as np
+import nltk
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -137,6 +138,14 @@ class NlpPreProcess(object):
         # Filter allowed POS tags and lemmatize
         texts_out.append([token.lemma_ for token in doc if token.pos_ in allowed_postags])
         return texts_out[0]  # Return flat list of lemmatized tokens
+    
+    # split the text into sentences
+    def split_text_into_sentences(self, text):
+        if self.nlp is None:
+            return re.split(r'[.!?]+', text)
+        else:
+            doc = self.nlp(text)
+            return [sent.text for sent in doc.sents]
 
     def lemmatize_texts(self, texts):
         """Lemmatize a batch of texts for better performance."""
@@ -178,22 +187,22 @@ class NlpPreProcess(object):
         # print(f"Step 1 completed in {datetime.now() - stime}")
         # print(df.head())
         
-        # Step 2: Tokenize into words
-        if self.nlp is not None:
-            df[col] = df[col].progress_apply(lambda x: [token.text for token in self.nlp(x) if not token.is_space])
-        else:
-            # Fallback to simple tokenization if spaCy is not available
-            df[col] = df[col].progress_apply(lambda x: x.split())
-        print(f"Step 2 completed in {datetime.now() - stime}")
-        print(df.head())
+        # # Step 2: Tokenize into words
+        # if self.nlp is not None:
+        #     df[col] = df[col].progress_apply(lambda x: [token.text for token in self.nlp(x) if not token.is_space])
+        # else:
+        #     # Fallback to simple tokenization if spaCy is not available
+        #     df[col] = df[col].progress_apply(lambda x: x.split())
+        # print(f"Step 2 completed in {datetime.now() - stime}")
+        # print(df.head())
         
-        # Step 3: Remove stopwords
-        df[col] = df[col].progress_apply(lambda x: self.remove_stopwords(x) if isinstance(x, list) else x)
+        # # Step 3: Remove stopwords
+        # df[col] = df[col].progress_apply(lambda x: self.remove_stopwords(x) if isinstance(x, list) else x)
         
-        # Step 4: Apply lemmatization
-        df[col] = df[col].progress_apply(lambda x: self.lemmatization(' '.join(x)) if isinstance(x, list) else x.split())
-        print(f"Step 4 completed in {datetime.now() - stime}")
-        print(df.head())
+        # # Step 4: Apply lemmatization
+        # df[col] = df[col].progress_apply(lambda x: self.lemmatization(' '.join(x)) if isinstance(x, list) else x.split())
+        # print(f"Step 4 completed in {datetime.now() - stime}")
+        # print(df.head())
         
         # # Step 5: Create bigrams and trigrams
         # try:
@@ -210,13 +219,13 @@ class NlpPreProcess(object):
         # print(f"Step 6 completed in {datetime.now() - stime}")
         # print(df.head())
         
-        # Step 7: Rejoin tokenized words into a string
-        df[col] = df[col].progress_apply(lambda x: ' '.join(x) if isinstance(x, list) else str(x))
+        # # Step 7: Rejoin tokenized words into a string
+        # df[col] = df[col].progress_apply(lambda x: ' '.join(x) if isinstance(x, list) else str(x))
     
-        print(f"Step 7 completed in {datetime.now() - stime}")
-        print(df.head())
-        print(f"Processing completed in {datetime.now() - stime}")
-
+        # print(f"Step 7 completed in {datetime.now() - stime}")
+        # print(df.head())
+        # print(f"Processing completed in {datetime.now() - stime}")
+        
         return df[col]
 
     def remove_unnecessary_sentence(self, text):
@@ -287,6 +296,76 @@ class NlpPreProcess(object):
             if not ((num_keywords > 2) or (('forward-looking' in snippet.lower()) or ('forward looking' in snippet.lower()))):
                 text.append(snippet)
         return text
+
+    def save_sentences_as_lines(self, df: pd.DataFrame, column_name: str, output_path: str):
+        """
+        Save documents as lines, splitting if they exceed 512 words while preserving sentence boundaries.
+        
+        Args:
+            df: DataFrame containing the text data
+            column_name: Name of the column containing text
+            output_path: Path to save the output file
+        """
+        try:
+            nltk.data.find('tokenizers/punkt')
+        except LookupError:
+            nltk.download('punkt', quiet=True)
+        
+        # Ensure output directory exists
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        
+        # Create a list to store processed documents
+        processed_docs = []
+        
+        # Process each document
+        for doc in tqdm(df[column_name].astype(str), desc="Processing documents"):
+            if not doc or doc.isspace():
+                continue
+            
+            # Use NLTK for sentence detection
+            sentences = nltk.sent_tokenize(doc)
+            
+            # Initialize variables for document chunking
+            current_chunk = []
+            current_word_count = 0
+            
+            for sent in sentences:
+                # Clean sentence
+                clean_sent = re.sub(r'\s+', ' ', sent).strip()
+                if not clean_sent:
+                    continue
+                    
+                # Count words in current sentence
+                sent_word_count = len(clean_sent.split())
+                
+                # If adding this sentence would exceed 512 words
+                if current_word_count + sent_word_count > 512:
+                    # Save current chunk if it exists
+                    if current_chunk:
+                        processed_docs.append(' '.join(current_chunk))
+                    # Start new chunk with current sentence
+                    current_chunk = [clean_sent]
+                    current_word_count = sent_word_count
+                else:
+                    # Add sentence to current chunk
+                    current_chunk.append(clean_sent)
+                    current_word_count += sent_word_count
+            
+            # Add any remaining chunk
+            if current_chunk:
+                processed_docs.append(' '.join(current_chunk))
+        
+        # Write processed documents to file, one per line
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write('\|\|\|\n'.join(processed_docs))
+        
+        logger.info(f"Saved {len(processed_docs)} document chunks to {output_path}")
+        # Log distribution of chunk sizes
+        word_counts = [len(doc.split()) for doc in processed_docs]
+        logger.info(f"Average words per chunk: {sum(word_counts)/len(word_counts):.1f}")
+        logger.info(f"Max words in a chunk: {max(word_counts)}")
+        
+        return processed_docs
 
 # if __name__ == '__main__':
 #     preprocess_file()

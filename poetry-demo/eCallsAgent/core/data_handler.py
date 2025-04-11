@@ -13,6 +13,7 @@ from eCallsAgent.core.preprocess_earningscall import NlpPreProcess
 from eCallsAgent.config import global_options as gl
 import multiprocessing as mp
 import numpy as np     
+import re
 tqdm.pandas()
 
 logger = logging.getLogger(__name__)
@@ -27,9 +28,11 @@ class DataHandler:
 
     @staticmethod
     def _process_chunk(chunk: str) -> list:
-        """Process a chunk of text into non-empty stripped lines."""
+        """Process a chunk of text into separate documents."""
         try:
-            return [line.strip() for line in chunk.splitlines() if line.strip()]
+            # Split by the literal separator '\|\|\|\n' and filter empty documents
+            docs = [doc.strip() for doc in chunk.split('\|\|\|\n') if doc.strip()]
+            return docs
         except Exception as e:
             logger.error(f"Error processing chunk: {e}")
             return []
@@ -39,19 +42,40 @@ class DataHandler:
         docs = []
         logger.info(f"Loading documents from {docs_path}")
 
-        def read_chunks(fp, size):
-            while True:
-                chunk = fp.read(size)
-                if not chunk:
-                    break
-                yield chunk
+        # Read the entire file at once since we're dealing with document separators
+        with open(docs_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+            
+        # Split content into roughly equal chunks at separator boundaries
+        chunks = []
+        total_size = len(content)
+        start = 0
+        
+        while start < total_size:
+            # Find the next chunk boundary
+            end = start + chunk_size
+            if end >= total_size:
+                chunks.append(content[start:])
+                break
+                
+            # Find the next separator after our desired chunk size
+            next_sep = content.find('\|\|\|\n', end)
+            if next_sep == -1:  # No more separators
+                chunks.append(content[start:])
+                break
+                
+            # Include the separator in the chunk
+            chunk_end = next_sep + 5  # Include '\|\|\|\n'
+            chunks.append(content[start:chunk_end])
+            start = chunk_end
 
-        # Use ProcessPoolExecutor for parallel processing of chunks
-        with open(docs_path, 'r', encoding='utf-8') as f, ProcessPoolExecutor(max_workers=cpu_count()) as executor:
+        # Process chunks in parallel
+        with ProcessPoolExecutor(max_workers=cpu_count()) as executor:
             futures = {executor.submit(DataHandler._process_chunk, chunk): chunk 
-                       for chunk in read_chunks(f, chunk_size)}
+                      for chunk in chunks}
             for future in tqdm(as_completed(futures), total=len(futures), desc="Loading documents"):
                 docs.extend(future.result())
+                
         logger.info(f"Loaded {len(docs)} documents")
         return docs
 
@@ -127,10 +151,10 @@ class DataHandler:
             logger.error(f"Error in preprocess_text: {e}")
             raise
 
-    def _preprocess_text(self, df: pd.DataFrame, col: str) -> str:
+    def _preprocess_text(self, df: pd.DataFrame, col: str, path: str) -> str:
         """Preprocess a single document."""
         try:
-            return self.nlp_processor.preprocess_file(df, col).tolist()
+            return self.nlp_processor.save_sentences_as_lines(df, col, path).tolist()
         except Exception as e:
             logger.error(f"Error preprocessing document: {e}")
             return ""
@@ -200,7 +224,7 @@ class DataHandler:
                 chunk_skipped += 1
         return chunk_result, chunk_skipped
         
-    def process_dup_earnings_calls(self, df_input: pd.DataFrame):
+    def process_dup_earnings_calls(self, df_input: pd.DataFrame, path: str):
         # Load the data
         df = df_input
         logger.info(f"Successfully loaded data with {len(df)} rows")  
@@ -246,20 +270,30 @@ class DataHandler:
         logger.info(f"There are {len(df_unique_calls)} unique calls")
         # drop duplicates text
         df_unique_calls = df_unique_calls.drop_duplicates(subset='componenttext', keep='first')
-        logger.info(f"There are {len(df_unique_calls)} unique calls after dropping duplicates")
-        self.save_data(df_unique_calls, 'transcriptid', 'componenttext', gl.YEAR_START, gl.YEAR_END)
-        return df_unique_calls[gl.TEXT_COLUMN].astype(str).tolist()
+        # save sentences as lines
+        all_sentences = self.nlp_processor.save_sentences_as_lines(df_unique_calls, 'componenttext', path)
+        logger.info(f"There are {len(df_unique_calls)} unique calls after dropping duplicates and {len(all_sentences)} sentences/docs")
+        # self.save_data(df_unique_calls, 'transcriptid', 'componenttext', gl.YEAR_START, gl.YEAR_END)
+        return all_sentences
 
     def save_data(self, df: pd.DataFrame, id_name: str, column_name: str, start_year: int, end_year: int):
-        # Create output directory if it doesn't exist
-        os.makedirs(gl.input_folder, exist_ok=True)
+        # Create processed directory if it doesn't exist
+        processed_dir = os.path.join(gl.input_folder, 'processed')
+        os.makedirs(processed_dir, exist_ok=True)
         
-        # Save as proper CSV with both columns
-        output_file = os.path.join(gl.input_folder, 'processed', f'{column_name}_{start_year}_{end_year}.csv')
-        
-        # Create a new DataFrame with just the two columns we want
+        # Different file extensions for CSV and TXT
+        output_csv = os.path.join(processed_dir, f'{column_name}_{start_year}_{end_year}.csv')
+        output_txt = os.path.join(processed_dir, f'{column_name}_{start_year}_{end_year}.txt')
+
+        # Create a new DataFrame with the two columns we want
         output_df = df[[id_name, column_name]].copy()
         
         # Save to CSV with proper header
-        output_df.to_csv(output_file, index=False)
-        logger.info(f"Saved data to {output_file} with {len(output_df)} rows")
+        output_df.to_csv(output_csv, index=False)
+        
+        # Save to TXT with double newline separator to match the loading function
+        with open(output_txt, 'w', encoding='utf-8') as f:
+            # Use double newlines to match re.split(r'\n\s*\n', chunk) in _process_chunk
+            f.write('\n\n'.join(output_df[column_name].astype(str).tolist()))
+        
+        logger.info(f"Saved data to {output_csv} and {output_txt} with {len(output_df)} documents")

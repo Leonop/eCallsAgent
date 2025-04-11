@@ -27,6 +27,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='Run the topic modeling pipeline')
@@ -78,9 +80,12 @@ def main() -> None:
             # Ensure the index is valid
             if 0 <= args.embedding_model < len(gl.EMBEDDING_MODELS):
                 gl.DEFAULT_MODEL_INDEX = args.embedding_model
-                logger.info(f"Using embedding model: {gl.EMBEDDING_MODELS[gl.DEFAULT_MODEL_INDEX]}")
             else:
                 logger.warning(f"Invalid embedding model index: {args.embedding_model}. Using default.")
+        
+        # Log the model being used
+        model_key = gl.EMBEDDING_MODELS[gl.DEFAULT_MODEL_INDEX].replace('/', '-').replace(' ', '_')
+        logger.info(f"Using embedding model: {model_key}")
         
         # Set up device
         _, device_str, _ = setup_cuda()
@@ -93,7 +98,7 @@ def main() -> None:
             
             # Load and preprocess data
             data_handler = DataHandler(file_path, gl.YEAR_START, gl.YEAR_END)
-            processed_docs_path = os.path.join(gl.input_folder, "processed", f'componenttext_{gl.YEAR_START}_{gl.YEAR_END}.txt')
+            processed_docs_path = os.path.join(gl.input_folder, "processed", f'componenttext_{gl.YEAR_START}_{gl.YEAR_END}_{model_key}.txt')
 
             if os.path.exists(processed_docs_path):
                 logger.info(f"Found preprocessed docs at {processed_docs_path}. Loading...")
@@ -102,15 +107,13 @@ def main() -> None:
                 logger.info("Processed docs not found. Processing raw data...")
                 data_df = data_handler.load_data() # load the raw data
                 logger.info(f"process duplicate earnings calls {data_df.shape}")
-                docs = data_handler.process_dup_earnings_calls(data_df) # remove duplicate earnings calls
+                docs = data_handler.process_dup_earnings_calls(data_df, processed_docs_path) # remove duplicate earnings calls
                 os.makedirs(gl.output_folder, exist_ok=True)
-                logger.info(f"Saving processed docs to {processed_docs_path}")
-                with open(processed_docs_path, 'w', encoding='utf-8') as f:
-                    f.write("\n".join(docs))
+                logger.info(f"Processed and saved docs to {processed_docs_path}")
             
             # Initialize embedding generator
             logger.info(f"embedding generator initialized")
-            embedding_gen = EmbeddingGenerator(device_str)
+            embedding_gen = EmbeddingGenerator(device_str, gl.DEFAULT_MODEL_INDEX)
             
             # Try to load existing embeddings first
             try:
@@ -147,7 +150,7 @@ def main() -> None:
                                     
             # Map all documents to topics
             logger.info("************** Create topic probabilities CSV **************")
-            output_path = os.path.join(gl.output_folder, f"topic_probabilities_{gl.YEAR_START}_{gl.YEAR_END}.csv")
+            output_path = os.path.join(gl.output_folder, f"topic_probabilities_{gl.YEAR_START}_{gl.YEAR_END}_{model_key}.csv")
             
             try:
                 # Check if data variable exists and is accessible
@@ -186,13 +189,13 @@ def main() -> None:
             os.makedirs(gl.models_folder, exist_ok=True)
             model_path = os.path.join(
                 gl.models_folder, 
-                f"bertopic_model_{n_neighbors}_{n_components}_{min_cluster_size}_{min_samples}_{n_topics}_{gl.YEAR_START}_{gl.YEAR_END}.pkl"
+                f"bertopic_model_{n_neighbors}_{n_components}_{min_cluster_size}_{min_samples}_{n_topics}_{gl.YEAR_START}_{gl.YEAR_END}_{model_key}.pkl"
             )
             final_model.save(model_path)
             logger.info(f"Model saved to {model_path}")
             
             # Save visualization figures
-            topic_modeler.save_figures(final_model)
+            topic_modeler.save_figures(final_model, include_doc_vis=True)
             topic_info = final_model.get_topic_info()
             logger.info(f"Generated {len(topic_info)} topics")
             
