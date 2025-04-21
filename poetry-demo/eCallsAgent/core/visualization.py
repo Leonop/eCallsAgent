@@ -120,7 +120,7 @@ class TopicVis:
             for topic_id, label in self.custom_labels.items():
                 if topic_id == 0:
                     continue
-                if topic_id >= 0 and topic_id < len(topic_coords):
+                if topic_id > 0 and topic_id < len(topic_coords):
                     fig.add_trace(go.Scatter(
                         x=[topic_coords[topic_id, 0]],
                         y=[topic_coords[topic_id, 1]],

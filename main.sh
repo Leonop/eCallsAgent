@@ -5,7 +5,7 @@
 #SBATCH --error=eCallsAgent/output/log_files/main_%j.err       # Separate file for error logs
 #SBATCH --nodes=1                   # Use one node
 #SBATCH --ntasks-per-node=1          # One task per node
-#SBATCH --cpus-per-task=16          # Number of CPU cores per task
+#SBATCH --cpus-per-task=32          # Number of CPU cores per task
 #SBATCH --gres=gpu:1                # Request 1 GPU
 #SBATCH --partition=agpu72       # Use GPU partition
 #SBATCH --qos=gpu               # Required QOS for GPU partitions
@@ -29,6 +29,8 @@ conda activate bertopic_env || {
 }
 # pip install -U kaleido
 # pip freeze > eCallsAgent/requirements.txt
+# pip install poetry
+# poetry install
 # Verify CUDA
 echo "=== Verifying CUDA setup ==="
 nvidia-smi || { echo "ERROR: nvidia-smi failed. Exiting."; exit 1; }
@@ -42,7 +44,7 @@ print('CUDA available:', torch.cuda.get_device_name(0))
 
 # Set Python path and run main script
 export PYTHONPATH="/scrfs/storage/zichengx/home/Research/AIphaBiz:${PYTHONPATH}"
-cd /scrfs/storage/zichengx/home/Research/AIphaBiz
-python -m eCallsAgent.main
+cd /scrfs/storage/zichengx/home/Research/AIphaBiz/poetry-demo
+poetry run python -m eCallsAgent.main
 
 echo "=== Job completed at $(date) ==="

@@ -13,12 +13,12 @@ from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from hdbscan import HDBSCAN
 from umap import UMAP
 from bertopic import BERTopic
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, models
 from eCallsAgent.utils.openai_compat import create_openai_client, create_completion
 from eCallsAgent.core.chunking_utils import _cpu_topic_model, _gpu_topic_model
 from eCallsAgent.core.visualization import TopicVis
 from eCallsAgent.core.chunking_utils import process_chunk_worker, CUML_AVAILABLE  # Add CUML_AVAILABLE import
-from eCallsAgent.utils.cuda_setup import setup_cuda, check_cuml_availability 
+from eCallsAgent.utils.cuda_setup import setup_cuda, check_cuml_availability, init_sentence_transformer 
 from eCallsAgent.config import global_options as gl # global settings
 import json
 import pickle
@@ -124,9 +124,15 @@ class TopicModeler:
         # Set embedding model selection
         self.embedding_model_index = gl.DEFAULT_MODEL_INDEX
         self.pre_trained_model_name = gl.EMBEDDING_MODELS[self.embedding_model_index]
-        self.embedding_model = SentenceTransformer(self.pre_trained_model_name)
+        
+        # Use the common utility function for initializing SentenceTransformer
+        self.embedding_model = init_sentence_transformer(self.pre_trained_model_name, self.device)
+        self.logger.info(f"Successfully loaded model: {self.pre_trained_model_name}")
+        
         # Store seed topics
-        self.seed_topics = SEED_TOPICS        # Store parameters for UMAP 
+        self.seed_topics = SEED_TOPICS
+        
+        # Store parameters for UMAP 
         self.n_neighbors = N_NEIGHBORS
         self.n_components = N_COMPONENTS
         self.min_dist = MIN_DIST
@@ -613,9 +619,12 @@ class TopicModeler:
             except Exception as e:
                 self.logger.error(f"Error in fix_empty_topics: continuing with original model:{str(e)}")
             
-            # Update topic labels with custom labels
-            topic_info, _ = self.save_topic_keywords(topic_model)
-            final_model = self.update_topic_labels(topic_info, topic_model)
+            # Only update topic labels with custom labels if not skipping grid search (gl.SKIP_GRID_SEARCH=False)
+            if gl.SKIP_GRID_SEARCH:
+                topic_info, _ = self.save_topic_keywords(topic_model)
+                final_model = self.update_topic_labels(topic_info, topic_model)
+            else:
+                final_model = topic_model
             
             # Return the trained model
             return final_model
@@ -1410,7 +1419,8 @@ class TopicModeler:
                 stop_words="english",
                 min_df=gl.MIN_DF[0],
                 max_df=gl.MAX_DF[0],
-                ngram_range=(1, 3)  # Add bigrams and tri-grams for better topic modeling
+                ngram_range=(2, 4),  # Add bigrams and tri-grams for better topic modeling
+
                 )
             # Check if we have seed topics defined
             if hasattr(self, 'seed_topics') and self.seed_topics:
@@ -1423,7 +1433,7 @@ class TopicModeler:
                     umap_model=umap_model,
                     hdbscan_model=hdbscan_model,
                     vectorizer_model=vectorizer_model,
-                    nr_topics='auto',
+                    nr_topics=gl.NR_TOPICS[0],
                     seed_topic_list=self.seed_topics,
                     top_n_words=gl.TOP_N_WORDS[0],
                     calculate_probabilities=False,
@@ -1435,7 +1445,7 @@ class TopicModeler:
                         umap_model=umap_model,
                         hdbscan_model=hdbscan_model,
                         vectorizer_model=vectorizer_model,
-                        nr_topics='auto',
+                        nr_topics=gl.NR_TOPICS[0],
                         seed_topic_list=None,
                         top_n_words=gl.TOP_N_WORDS[0],
                         calculate_probabilities=False,
@@ -1617,6 +1627,7 @@ class TopicModeler:
             combined_representatives = {}
             with Pool(processes=n_workers) as pool:
                 # Process chunks with progress bar
+                # self.logger.info(f"Processing {len(chunk_params)} chunks with {n_workers} workers")
                 task_iter = pool.starmap(process_chunk_worker, chunk_params)
                 for chunk_result in tqdm(task_iter, total=len(chunk_params), desc="Processing document chunks", unit="chunk", colour='orange'):
                     if chunk_result:  # Only update if the result is not empty

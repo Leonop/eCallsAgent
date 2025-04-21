@@ -68,7 +68,7 @@ def process_chunk_worker(chunk_idx: int, chunk_docs: List[str], chunk_embeddings
     try:
         # Setup logging
         logger = logging.getLogger(__name__)
-        logger.info(f"Worker processing chunk {chunk_idx+1}/{total_chunks} with {len(chunk_docs)} documents")
+        # logger.info(f"Worker processing chunk {chunk_idx+1}/{total_chunks} with {len(chunk_docs)} documents")
         
         # Ensure embeddings are numpy arrays on CPU
         if isinstance(chunk_embeddings, torch.Tensor):
@@ -92,7 +92,6 @@ def process_chunk_worker(chunk_idx: int, chunk_docs: List[str], chunk_embeddings
             embedding_model=embedding_model,
             umap_model=umap_model,
             hdbscan_model=hdbscan_model,
-            seed_topic_list=gl.SEED_TOPICS,
             calculate_probabilities=False,
             nr_topics = 'auto',
             verbose=False
@@ -108,14 +107,14 @@ def process_chunk_worker(chunk_idx: int, chunk_docs: List[str], chunk_embeddings
         
         # Get number of topics
         n_topics = len(set(topics)) - (1 if -1 in topics else 0)
-        logger.info(f"Worker found {n_topics} topics in chunk {chunk_idx+1}")
+        # logger.info(f"Worker found {n_topics} topics in chunk {chunk_idx+1}")
         
         # If very few topics, retry with more aggressive parameters
         if n_topics < 5:
             logger.warning(f"Worker: Few topics found ({n_topics}), retrying with more aggressive parameters")
             
             retry_umap = UMAP(
-                n_neighbors=5,
+                n_neighbors=10,
                 n_components=50,
                 min_dist=0.0,
                 metric='cosine',
@@ -125,8 +124,8 @@ def process_chunk_worker(chunk_idx: int, chunk_docs: List[str], chunk_embeddings
             )
             
             retry_hdbscan = HDBSCAN(
-                min_samples=3,
-                min_cluster_size=15,
+                min_samples=10,
+                min_cluster_size=30,
                 metric='euclidean',
                 cluster_selection_method='eom',
                 prediction_data=True,
@@ -199,7 +198,7 @@ def _cpu_topic_model(n_neighbors, n_components, min_dist, min_samples, min_clust
     Returns:
         tuple: (umap_model, hdbscan_model)
     """
-    logger.info("Using CPU-based UMAP and HDBSCAN for chunk processing")
+    # logger.info("Using CPU-based UMAP and HDBSCAN for chunk processing")
     umap_model = UMAP(
         n_neighbors=n_neighbors,
         n_components=n_components,
@@ -234,7 +233,7 @@ def _gpu_topic_model(n_neighbors, n_components, min_dist, min_samples, min_clust
     Returns:
         tuple: (umap_model, hdbscan_model)
     """
-    logger.info("🚀 Using GPU-accelerated cuML UMAP for chunk processing")
+    # logger.info("🚀 Using GPU-accelerated cuML UMAP for chunk processing")
     umap_model = cumlUMAP(
         n_neighbors=n_neighbors,
         n_components=n_components,
@@ -244,7 +243,7 @@ def _gpu_topic_model(n_neighbors, n_components, min_dist, min_samples, min_clust
         output_type="numpy"  # Ensure NumPy output
     )
     
-    logger.info("🚀 Using GPU-accelerated cuML HDBSCAN for chunk processing")
+    # logger.info("🚀 Using GPU-accelerated cuML HDBSCAN for chunk processing")
     hdbscan_model = cumlHDBSCAN(
         min_samples=min_samples,
         min_cluster_size=min_cluster_size,

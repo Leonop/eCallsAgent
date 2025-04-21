@@ -4,7 +4,7 @@ from datetime import datetime
 from eCallsAgent.core import data_handler
 from eCallsAgent.config import global_options as gl
 
-def process_earnings_calls(data_file_path: str, start_year: int, end_year: int):
+def process_dup_earnings_calls(data_file_path: str, start_year: int, end_year: int):
     # Load the data
     dh = data_handler.DataHandler(data_file_path, start_year, end_year)
     df = dh.load_data()
@@ -34,8 +34,8 @@ def process_earnings_calls(data_file_path: str, start_year: int, end_year: int):
         if group['transcriptcomponenttypename'].iloc[0] in rows_to_keep:
             first_row = group.iloc[0].copy()
             # Replace the text with the last row's text
-            first_row['componenttext'] = group['componenttext'].iloc[-1]
-            first_row['transcriptid'] = group['transcriptid'].iloc[0]
+            first_row['componenttext'] = group['componenttext'].iloc[-1] # last row of duplicate text, which is the most recent text
+            first_row['transcriptid'] = group['transcriptid'].iloc[0] # transcriptid is the same for all rows in the group
             result.append(first_row)
         else:
             count_skipped += 1

@@ -19,7 +19,8 @@ from typing import Tuple, Dict
 from itertools import product
 from joblib import Memory
 from eCallsAgent.core.chunking_utils import _cpu_topic_model, _gpu_topic_model
-from eCallsAgent.core.topic_modeler import TopicModeler as tm
+from eCallsAgent.core.topic_modeler import TopicModeler
+from eCallsAgent.utils.cuda_setup import setup_cuda
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -31,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 # initialize topic modeler
 device_str = 'cuda:0'
-tm = tm(device_str)
+tm = TopicModeler(device_str)
 
 class ModelEvaluator:
     """Handles model evaluation and parameter tuning."""
@@ -246,8 +247,8 @@ class ModelEvaluator:
                                     try:
                                         # Configure model with current parameters
                                         
-                                        umap_model, hdbscan_model = _gpu_topic_model(n_neighbors, n_components, min_dist, min_samples, min_cluster_size, cluster_selection_epsilon)
-                                        topic_model = tm.train_topic_model(docs, embeddings, umap_model, hdbscan_model)
+                                        # umap_model, hdbscan_model = _gpu_topic_model(n_neighbors, n_components, min_dist, min_samples, min_cluster_size, cluster_selection_epsilon)
+                                        topic_model = tm.train_topic_model(docs, embeddings)
                                         
                                         # Count topics (excluding -1 noise topic)
                                         topics = set(topic_model.topics_)

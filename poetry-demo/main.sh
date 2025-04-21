@@ -6,8 +6,8 @@
 #SBATCH --nodes=1                   # Use one node
 #SBATCH --ntasks-per-node=1          # One task per node
 #SBATCH --cpus-per-task=16          # Number of CPU cores per task
-#SBATCH --gres=gpu:4                # Request 4 GPUs
-#SBATCH --partition=qgpu72          # Use qgpu72 partition (nodes with 4 GPUs)
+#SBATCH --gres=gpu:1               # Request 1 GPUs
+#SBATCH --partition=agpu72          # Use qgpu72 partition (nodes with 4 GPUs)
 #SBATCH --qos=gpu                   # Required QOS for GPU partitions
 #SBATCH --time=72:00:00             # Set time limit to 72 hours
 #SBATCH --mail-type=BEGIN,END,FAIL  # Notifications for job begin, end, and failure
@@ -98,6 +98,6 @@ python -c "import nltk, spacy, openai, cuml, cupy, dask, dask_cuda; print('All c
 
 # Run the main script
 # env NUMBA_CUDA_ENABLE_MINOR_VERSION_COMPATIBILITY=1 poetry run python -m eCallsAgent.main
-python -m eCallsAgent.main
+python -m eCallsAgent.main --embedding_model 4
 
 echo "=== Job completed at $(date) ==="

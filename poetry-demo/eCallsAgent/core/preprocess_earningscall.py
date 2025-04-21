@@ -171,62 +171,156 @@ class NlpPreProcess(object):
         text = re.sub(r'\d+', '', text)  # Remove digits
         return text.strip()  # Trim any leading/trailing spaces
     
+    def remove_repeated_tokens(self, tokens):
+        """
+        Removes all duplicate tokens while preserving order.
+        ['great', 'great', 'momentum'] → ['great', 'momentum']
+        """
+        seen = set()
+        output = []
+        for tok in tokens:
+            if tok not in seen:
+                seen.add(tok)
+                output.append(tok)
+        return output
+
+    def final_text_filter(self, text):
+        """
+        Final text filtering to remove unwanted patterns and clean up text.
+        remove duplicated words (e.g. "good good"), excessive words, digits, and isolated characters
+        Args:
+            text (str): Input text to filter
+            
+        Returns:
+            str: Cleaned text
+        """
+        if not isinstance(text, str):
+            return ""
+            
+        # Remove excessive whitespace
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        # Remove any remaining digits or isolated characters
+        text = re.sub(r'\b\d+\b', '', text)
+        text = re.sub(r'\b[a-zA-Z]\b', '', text)
+        
+        # Remove any empty parentheses or brackets
+        text = re.sub(r'\(\s*\)', '', text)
+        text = re.sub(r'\[\s*\]', '', text)
+        
+        # Remove duplicated words
+        words = text.split()
+        deduped_words = []
+        for i, word in enumerate(words):
+            if i == 0 or word != words[i-1]:
+                deduped_words.append(word)
+        text = ' '.join(deduped_words)
+        
+        # Final whitespace cleanup
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        return text
+
+    def clean_ngrams(self, tokens_list):
+        clean_list = []
+        for tokens in tokens_list:
+            filtered = [
+                tok for i, tok in enumerate(tokens)
+                if (i == 0 or tok != tokens[i-1]) and len(tok) > 2 and not any(c.isdigit() for c in tok)
+            ]
+            clean_list.append(filtered)
+        return clean_list
+
     def preprocess_file(self, df, col):
-        '''Preprocess the file: remove punctuation, digits, stopwords, lemmatize, and create n-grams'''
-        stime = datetime.now()
+        """
+        Preprocess a DataFrame column by:
+        1. Converting to string and deduplicating,
+        2. Removing punctuation and digits,
+        3. Tokenizing the text,
+        4. Removing stopwords,
+        5. Lemmatizing the tokens,
+        6. Creating bigrams and trigrams (n-grams), and
+        7. Rejoining tokens into a final string.
+        
+        Parameters:
+        df (pd.DataFrame): DataFrame containing the text data.
+        col (str): Column name in df with the text to process.
+        
+        Returns:
+        pd.Series: The preprocessed text column.
+        """
+        start_time = datetime.now()
+
+        # Step 0: Convert column to string and drop duplicates
         df[col] = df[col].astype(str)
-        # Step 0: Final deduplication
-        df = df.drop_duplicates(subset=col).reset_index(drop=True)
-        print(f"Final deduplication completed in {datetime.now() - stime}")
-        
-        # Enable tqdm for pandas operations
+
+        # Enable tqdm for pandas apply functions
         tqdm.pandas()
-        
-        # # Step 1: Remove punctuation and digits
-        # df[col] = df[col].progress_apply(self.remove_punct_and_digits)
-        # print(f"Step 1 completed in {datetime.now() - stime}")
-        # print(df.head())
-        
-        # # Step 2: Tokenize into words
-        # if self.nlp is not None:
-        #     df[col] = df[col].progress_apply(lambda x: [token.text for token in self.nlp(x) if not token.is_space])
-        # else:
-        #     # Fallback to simple tokenization if spaCy is not available
-        #     df[col] = df[col].progress_apply(lambda x: x.split())
-        # print(f"Step 2 completed in {datetime.now() - stime}")
-        # print(df.head())
-        
-        # # Step 3: Remove stopwords
-        # df[col] = df[col].progress_apply(lambda x: self.remove_stopwords(x) if isinstance(x, list) else x)
-        
-        # # Step 4: Apply lemmatization
-        # df[col] = df[col].progress_apply(lambda x: self.lemmatization(' '.join(x)) if isinstance(x, list) else x.split())
-        # print(f"Step 4 completed in {datetime.now() - stime}")
-        # print(df.head())
-        
-        # # Step 5: Create bigrams and trigrams
-        # try:
-        #     df[col] = pd.Series(self.smart_ngrams(df[col].tolist(), gl.MIN_COUNT, gl.THRESHOLD))
-        #     print(f"Step 5 completed in {datetime.now() - stime}")
-        # except Exception as e:
-        #     logger.error(f"Error in smart_ngrams: {e}")
-        #     # Continue without n-grams if there's an error
-        #     logger.warning("Continuing without n-grams")
-        # print(df.head())
-        
-        # # Step 6: Remove stopwords from bigrams and trigrams
-        # # df[col] = df[col].progress_apply(lambda x: self.remove_stopwords(x) if isinstance(x, list) else x and len(str(x)) >= 2)
-        # print(f"Step 6 completed in {datetime.now() - stime}")
-        # print(df.head())
-        
-        # # Step 7: Rejoin tokenized words into a string
-        # df[col] = df[col].progress_apply(lambda x: ' '.join(x) if isinstance(x, list) else str(x))
-    
-        # print(f"Step 7 completed in {datetime.now() - stime}")
-        # print(df.head())
-        # print(f"Processing completed in {datetime.now() - stime}")
-        
-        return df[col]
+
+        # Step 1: Remove punctuation/digits from raw text
+        df[col] = df[col].progress_apply(self.remove_punct_and_digits)
+        logger.info(f"[Step 1] Punctuation/Digits removed in {datetime.now() - start_time}")
+        logger.info(df.head())
+
+        # Step 2: Tokenize text
+        if self.nlp:
+            tokenize_func = lambda text: [token.text for token in self.nlp(text) if not token.is_space]
+        else:
+            tokenize_func = lambda text: text.split()
+        df[col] = df[col].progress_apply(tokenize_func)
+        logger.info(f"[Step 2] Tokenization completed in {datetime.now() - start_time}")
+        logger.info(df.head())
+
+        # Step 3: Remove repeated tokens BEFORE stopword removal and lemmatization
+        df[col] = df[col].progress_apply(lambda x: self.remove_repeated_tokens(x) if isinstance(x, list) else x)
+        logger.info(f"[Step 3] Removed repeated tokens in {datetime.now() - start_time}")
+
+
+        # Step 4: Remove stopwords using a helper function (assumes input is a list)
+        df[col] = df[col].progress_apply(lambda tokens: self.remove_stopwords(tokens) if isinstance(tokens, list) else tokens)
+        logger.info(f"[Step 4] Stopword removal completed in {datetime.now() - start_time}")
+        logger.info(df.head())
+
+        # Step 5: Create n-grams (bigrams and trigrams) using smart_ngrams.
+        try:
+            tokens_list = df[col].tolist()
+            ngrams = self.smart_ngrams(tokens_list, gl.MIN_COUNT, gl.THRESHOLD)
+            ngrams = self.remove_repeated_tokens_in_list_of_lists(ngrams)
+            ngrams = self.clean_ngrams(ngrams)
+            ngrams = self.remove_stopwords_from_lists(ngrams)            
+            df[col] = pd.Series(ngrams)
+            logger.info(f"[Step 5] N-grams creation completed in {datetime.now() - start_time}")
+        except Exception as e:
+            logger.error(f"Error in smart_ngrams: {e}")
+            logger.warning("Continuing without n-grams")
+        logger.info(df.head())
+
+        # Step 6: Lemmatize tokens.
+        # Join tokens into a string for lemmatization and then split the result back into tokens.
+        df[col] = df[col].progress_apply(
+            lambda tokens: self.lemmatization(' '.join(tokens)) if isinstance(tokens, list) else self.lemmatization(tokens)
+        )
+        logger.info(f"[Step 6] Lemmatization completed in {datetime.now() - start_time}")
+        logger.info(df.head())
+
+        # Step 7: (Optional) Additional stopwords removal on n-gram tokens could be re-enabled here.
+        logger.info(f"[Step 6] (Optional step) Completed in {datetime.now() - start_time}")
+        logger.info(df.head())
+
+        # Step 8: Rejoin tokens into a single string if necessary
+        df[col] = df[col].progress_apply(lambda tokens: ' '.join(tokens) if isinstance(tokens, list) else str(tokens))
+        logger.info(f"[Step 7] Rejoining tokens completed in {datetime.now() - start_time}")
+        logger.info(df.head())
+
+        df[col] = df[col].apply(self.final_text_filter)
+        logger.info(f"[Final] Text filter applied after rejoining")
+
+        df = df.drop_duplicates(subset=col).reset_index(drop=True)
+        logger.info(f"[Deduplication] Completed in {datetime.now() - start_time}")
+        logger.info(f"[Processing Completed] Total time: {datetime.now() - start_time}")
+
+        return df
+
 
     def remove_unnecessary_sentence(self, text):
         """去除列表裏无用句子"""
@@ -306,10 +400,10 @@ class NlpPreProcess(object):
             column_name: Name of the column containing text
             output_path: Path to save the output file
         """
-        try:
-            nltk.data.find('tokenizers/punkt')
-        except LookupError:
-            nltk.download('punkt', quiet=True)
+        # try:
+        #     nltk.data.find('tokenizers/punkt')
+        # except LookupError:
+        #     nltk.download('punkt', quiet=True)
         
         # Ensure output directory exists
         os.makedirs(os.path.dirname(output_path), exist_ok=True)

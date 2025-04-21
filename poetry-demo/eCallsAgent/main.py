@@ -56,33 +56,7 @@ def parse_arguments():
 def main() -> None:
     """Main processing pipeline with distributed computing support."""
     try:
-        # Parse command line arguments
-        args = parse_arguments()
-        
-        # Override global settings if command line arguments are provided
-        if args.skip_grid_search:
-            gl.SKIP_GRID_SEARCH = True
-            logger.info(f"Grid search will be skipped as specified by command line argument.")
-        
-        if args.parameter_set:
-            gl.PARAMETER_SET = args.parameter_set
-            logger.info(f"Using parameter set: {gl.PARAMETER_SET}")
-        
-        if args.year_start:
-            gl.YEAR_START = args.year_start
-            logger.info(f"Using start year: {gl.YEAR_START}")
-        
-        if args.year_end:
-            gl.YEAR_END = args.year_end
-            logger.info(f"Using end year: {gl.YEAR_END}")
-            
-        if args.embedding_model is not None:
-            # Ensure the index is valid
-            if 0 <= args.embedding_model < len(gl.EMBEDDING_MODELS):
-                gl.DEFAULT_MODEL_INDEX = args.embedding_model
-            else:
-                logger.warning(f"Invalid embedding model index: {args.embedding_model}. Using default.")
-        
+        logger.info("Starting topic modeling pipeline")
         # Log the model being used
         model_key = gl.EMBEDDING_MODELS[gl.DEFAULT_MODEL_INDEX].replace('/', '-').replace(' ', '_')
         logger.info(f"Using embedding model: {model_key}")
@@ -98,10 +72,10 @@ def main() -> None:
             
             # Load and preprocess data
             data_handler = DataHandler(file_path, gl.YEAR_START, gl.YEAR_END)
-            processed_docs_path = os.path.join(gl.input_folder, "processed", f'componenttext_{gl.YEAR_START}_{gl.YEAR_END}_{model_key}.txt')
+            processed_docs_path = os.path.join(gl.input_folder, "processed", f'componenttext_{gl.YEAR_START}_{gl.YEAR_END}.txt')
 
             if os.path.exists(processed_docs_path):
-                logger.info(f"Found preprocessed docs at {processed_docs_path}. Loading...")
+                logger.info(f"Found preprocessed docs at {processed_docs_path}. Loading...") 
                 docs = data_handler.load_doc_parallel(processed_docs_path)
             else:
                 logger.info("Processed docs not found. Processing raw data...")
@@ -113,6 +87,15 @@ def main() -> None:
             
             # Initialize embedding generator
             logger.info(f"embedding generator initialized")
+
+            # Set EMBEDDING_DIM based on the selected model
+            model_name = gl.EMBEDDING_MODELS[gl.DEFAULT_MODEL_INDEX]
+            if model_name in gl.MODEL_DIMENSIONS:
+                gl.EMBEDDING_DIM = gl.MODEL_DIMENSIONS[model_name]
+                logger.info(f"Setting EMBEDDING_DIM to {gl.EMBEDDING_DIM} for model {model_name}")
+            else:
+                logger.warning(f"Model {model_name} not found in MODEL_DIMENSIONS. Using default EMBEDDING_DIM={gl.EMBEDDING_DIM}")
+
             embedding_gen = EmbeddingGenerator(device_str, gl.DEFAULT_MODEL_INDEX)
             
             # Try to load existing embeddings first
@@ -153,13 +136,10 @@ def main() -> None:
             output_path = os.path.join(gl.output_folder, f"topic_probabilities_{gl.YEAR_START}_{gl.YEAR_END}_{model_key}.csv")
             
             try:
-                # Check if data variable exists and is accessible
-                if 'data_df' in locals() and data_df is not None:
-                    logger.info(f" The size of the data variable is {data_df.shape}")
-                    data_handler._create_topic_probabilities_csv(data_df, docs, embeddings, topic_modeler, output_path)
-                else:
-                    logger.warning("Data variable not available. This may happen during small sample tests or when data loading is bypassed.")
-                    logger.warning("Skipping topic probabilities CSV creation.")
+                # pass processed directory and column name parameters
+                processed_dir = os.path.join(gl.input_folder, "processed")
+                column_name = "componenttext"
+                data_handler._create_topic_probabilities_csv(docs, embeddings, topic_modeler, output_path, processed_dir, column_name)
             except Exception as e:
                 logger.error(f"Error creating topic probabilities CSV: {e}")
                 logger.error(traceback.format_exc())
@@ -195,18 +175,18 @@ def main() -> None:
             logger.info(f"Model saved to {model_path}")
             
             # Save visualization figures
-            topic_modeler.save_figures(final_model, include_doc_vis=True)
+            topic_modeler.save_figures(final_model, include_doc_vis=False)
             topic_info = final_model.get_topic_info()
             logger.info(f"Generated {len(topic_info)} topics")
             
-            # Save UMAP results if available
-            if hasattr(final_model, 'umap_model') and final_model.umap_model is not None:
-                # Save UMAP results
-                umap_file = os.path.join(gl.output_folder, 'umap_embeddings.npy')
-                if not os.path.exists(umap_file):
-                    logger.info("Saving UMAP embeddings for future use")
-                    umap_embeddings = final_model.umap_model.transform(embeddings)
-                    np.save(umap_file, umap_embeddings)
+            # # Save UMAP results if available
+            # if hasattr(final_model, 'umap_model') and final_model.umap_model is not None:
+            #     # Save UMAP results
+            #     umap_file = os.path.join(gl.output_folder, 'umap_embeddings.npy')
+            #     if not os.path.exists(umap_file):
+            #         logger.info("Saving UMAP embeddings for future use")
+            #         umap_embeddings = final_model.umap_model.transform(embeddings)
+            #         np.save(umap_file, umap_embeddings)
             
             logger.info("Topic modeling completed successfully")
             

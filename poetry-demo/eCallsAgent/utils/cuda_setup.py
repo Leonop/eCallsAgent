@@ -11,6 +11,7 @@ import traceback
 import torch
 import numpy as np
 import time
+from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 
@@ -99,3 +100,46 @@ def check_cuml_availability():
         logger.error(f"Error checking cuML availability: {e}")
         logger.error(traceback.format_exc())
         return False
+
+def init_sentence_transformer(model_name, device="cuda"):
+    """Initialize a SentenceTransformer model with fallback for models that have pooling issues.
+    
+    Args:
+        model_name (str): The name of the model to load
+        device (str): The device to use for the model
+        
+    Returns:
+        SentenceTransformer: An initialized SentenceTransformer model
+    """
+ 
+    try:
+        # Try standard initialization first
+        model = SentenceTransformer(model_name)
+        # Set device after creation
+        if device.lower() != 'cpu':
+            model.to(torch.device(device))
+        logger.info(f"Successfully loaded model {model_name} with standard parameters")
+        return model
+    except TypeError as e:
+        logger.warning(f"Error loading model with default parameters: {e}")
+        logger.info("Trying to load with explicit pooling configuration...")
+        
+        # For instructor-xl and other models that might have pooling mode issues
+        from sentence_transformers import models
+        word_embedding_model = models.Transformer(model_name)
+        # Set device after model creation
+        if device.lower() != 'cpu':
+            word_embedding_model.to(torch.device(device))
+            
+        pooling_model = models.Pooling(
+            word_embedding_model.get_word_embedding_dimension(),
+            pooling_mode_mean_tokens=True,
+            pooling_mode_cls_token=False,
+            pooling_mode_max_tokens=False
+        )
+        model = SentenceTransformer(modules=[word_embedding_model, pooling_model])
+        logger.info(f"Successfully loaded model {model_name} with custom pooling configuration")
+        return model
+    except Exception as e:
+        logger.error(f"Failed to load model {model_name}: {e}")
+        raise

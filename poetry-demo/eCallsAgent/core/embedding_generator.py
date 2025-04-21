@@ -12,6 +12,7 @@ from tqdm import tqdm
 from sentence_transformers import SentenceTransformer
 
 import eCallsAgent.config.global_options as gl # global settings
+from eCallsAgent.utils.cuda_setup import init_sentence_transformer
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +33,19 @@ class EmbeddingGenerator:
         
         # Load model
         try:
-            self.model = SentenceTransformer(model_name, device=device)
+            # Use the common utility function for initializing SentenceTransformer
+            self.model = init_sentence_transformer(model_name, device)
             self.embedding_dim = self.model.get_sentence_embedding_dimension()
+            
+            # Make sure we're using the correct dimension from MODEL_DIMENSIONS
+            if model_name in gl.MODEL_DIMENSIONS and self.embedding_dim != gl.MODEL_DIMENSIONS[model_name]:
+                logger.warning(f"Model {model_name} reports dimension {self.embedding_dim} but expected {gl.MODEL_DIMENSIONS[model_name]}")
+            
             logger.info(f"Model loaded successfully. Embedding dimension: {self.embedding_dim}")
         except Exception as e:
             logger.error(f"Error loading model {model_name}: {e}")
             logger.info("Falling back to default model")
-            self.model = SentenceTransformer(gl.EMBEDDING_MODELS[0], device=device)
+            self.model = init_sentence_transformer(gl.EMBEDDING_MODELS[0], device)
             self.embedding_dim = self.model.get_sentence_embedding_dimension()
             self.model_name = gl.EMBEDDING_MODELS[0]
             self.model_index = 0
@@ -271,7 +278,7 @@ class EmbeddingGenerator:
                 # Load from the npz file we just saved
                 model_key = self.model_name.replace('/', '-').replace(' ', '_')
                 file_path = os.path.join(gl.embeddings_folder, 
-                                       f'embeddings_{gl.YEAR_START}_{gl.YEAR_END}_{model_key}.npz')
+                                       f'embeddings_{gl.YEAR_START}_{gl.YEAR_END}.npz')
                 saved_data = np.load(file_path)
                 return saved_data['embeddings']
 

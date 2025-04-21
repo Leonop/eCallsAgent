@@ -17,6 +17,7 @@ import re
 tqdm.pandas()
 
 logger = logging.getLogger(__name__)
+# initialize nlp processor
 
 class DataHandler:
     """Handles data loading and preprocessing operations."""
@@ -159,57 +160,72 @@ class DataHandler:
             logger.error(f"Error preprocessing document: {e}")
             return ""
 
-    def _create_topic_probabilities_csv(self, df_meta: pd.DataFrame, docs: list, embeddings: np.ndarray, topic_modeler, output_path):
+    def _create_topic_probabilities_csv(self, docs: list, embeddings: np.ndarray, topic_modeler, output_path, processed_dir=None, column_name=None):
         """
         Create a CSV file that combines document identifiers with topic probabilities.
         
         Args:
-            csv_path: Path to the raw transcript CSV
+            docs: list of documents
+            embeddings: numpy array of embeddings
             topic_modeler: Your TopicModeler instance containing rep_topics and rep_probs
             output_path: Where to save the resulting CSV
+            processed_dir: Directory containing processed data files
+            column_name: Name of the column used in the filename
         """
-        
-        # Filter for years 2011-2014
-        filtered_df = df_meta[(df_meta['year'] >= self.year_start) & (df_meta['year'] <= self.year_end)].copy()
-        logger.info(f"Filtered to {len(filtered_df)} documents from {self.year_start}-{self.year_end}")
-        
-        # Create a unique identifier (using transcriptid)
-        # You can adjust this if you need a different identifier
-        identifiers = filtered_df['transcriptid'].values
-        
-        # Check if lengths match
-        if len(identifiers) != len(topic_modeler.rep_probs):
-            logger.info(f"WARNING: Length mismatch! Identifiers: {len(identifiers)}, Probabilities: {len(topic_modeler.rep_probs)}")
-            return False
-        
-        logger.info(f"Lengths match! Creating CSV with {len(identifiers)} rows")
-        
-        topics, probs = topic_modeler._map_documents(docs, embeddings)
-
-        # Create a DataFrame with identifiers and probabilities
-        # If rep_probs is a 2D array (probabilities for each topic)
-        if len(probs) > 1:
-            # Create column names for each topic probability
-            topic_cols = [f'topic_{i}_embedding' for i in range(probs.shape[1])]
+        try:
+            # Load data from specific CSV instead of using load_data()
+            if processed_dir and column_name:
+                input_csv = os.path.join(processed_dir, f'{column_name}_{self.year_start}_{self.year_end}.csv')
+                logger.info(f"Loading data from {input_csv}")
+                if os.path.exists(input_csv):
+                    df_meta = pd.read_csv(input_csv)
+                    logger.info(f"Loaded {len(df_meta)} records from CSV file")
+                else:
+                    logger.warning(f"CSV file not found at {input_csv}, falling back to load_data()")
+                    df_meta = self.load_data()
             
-            # Create DataFrame
-            result_df = pd.DataFrame(probs, columns=topic_cols)
-            result_df.insert(0, 'transcriptid', identifiers)
-            result_df.insert(1, 'assigned_topic', topics)
-            result_df.insert(2, 'topic_probability', probs)
-        else:
-            # If rep_probs is 1D (just the confidence for the assigned topic)
-            result_df = pd.DataFrame({
-                'transcriptid': identifiers,
-                'assigned_topic': topics,
-                'topic_probability': probs
-            })
-        
-        # Save to CSV
-        result_df.to_csv(output_path, index=False)
-        logger.info(f"Saved topic probabilities to {output_path}")
-        
-        return True
+            logger.info(f"Filtered to {len(df_meta)} documents from {self.year_start}-{self.year_end}")
+            
+            # Create a unique identifier (using transcriptid)
+            # You can adjust this if you need a different identifier
+            identifiers = df_meta['transcriptid'].values
+            
+            # Check if lengths match
+            if len(identifiers) != len(topic_modeler.rep_probs):
+                logger.info(f"WARNING: Length mismatch! Identifiers: {len(identifiers)}, Probabilities: {len(topic_modeler.rep_probs)}")
+                return False
+            
+            logger.info(f"Lengths match! Creating CSV with {len(identifiers)} rows")
+            
+            topics, probs = topic_modeler._map_documents(docs, embeddings)
+
+            # Create a DataFrame with identifiers and probabilities
+            # If rep_probs is a 2D array (probabilities for each topic)
+            if len(probs) > 1:
+                # Create column names for each topic probability
+                topic_cols = [f'topic_{i}_embedding' for i in range(probs.shape[1])]
+                
+                # Create DataFrame
+                result_df = pd.DataFrame(probs, columns=topic_cols)
+                result_df.insert(0, 'transcriptid', identifiers)
+                result_df.insert(1, 'assigned_topic', topics)
+                result_df.insert(2, 'topic_probability', probs)
+            else:
+                # If rep_probs is 1D (just the confidence for the assigned topic)
+                result_df = pd.DataFrame({
+                    'transcriptid': identifiers,
+                    'assigned_topic': topics,
+                    'topic_probability': probs
+                })
+            
+            # Save to CSV
+            result_df.to_csv(output_path, index=False)
+            logger.info(f"Saved topic probabilities to {output_path}")
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error in _create_topic_probabilities_csv: {e}")
+            return False
 
     def process_chunk(self, chunk_df, groupby_cols, rows_to_keep):
         chunk_result = []
@@ -268,32 +284,34 @@ class DataHandler:
         logger.info(f"Skipped {count_skipped} rows for not in rows_to_keep")
         df_unique_calls = pd.DataFrame(result)
         logger.info(f"There are {len(df_unique_calls)} unique calls")
+        
         # drop duplicates text
-        df_unique_calls = df_unique_calls.drop_duplicates(subset='componenttext', keep='first')
+        df_unique_calls = self.nlp_processor.preprocess_file(df_unique_calls, 'componenttext')
         # save sentences as lines
         all_sentences = self.nlp_processor.save_sentences_as_lines(df_unique_calls, 'componenttext', path)
         logger.info(f"There are {len(df_unique_calls)} unique calls after dropping duplicates and {len(all_sentences)} sentences/docs")
-        # self.save_data(df_unique_calls, 'transcriptid', 'componenttext', gl.YEAR_START, gl.YEAR_END)
+        self.save_csv_data(df_unique_calls, 'transcriptid', 'componenttext', gl.YEAR_START, gl.YEAR_END)
         return all_sentences
 
-    def save_data(self, df: pd.DataFrame, id_name: str, column_name: str, start_year: int, end_year: int):
+    def save_csv_data(self, df: pd.DataFrame, id_name: str, column_name: str, start_year: int, end_year: int):
         # Create processed directory if it doesn't exist
         processed_dir = os.path.join(gl.input_folder, 'processed')
         os.makedirs(processed_dir, exist_ok=True)
         
         # Different file extensions for CSV and TXT
         output_csv = os.path.join(processed_dir, f'{column_name}_{start_year}_{end_year}.csv')
-        output_txt = os.path.join(processed_dir, f'{column_name}_{start_year}_{end_year}.txt')
+        # output_txt = os.path.join(processed_dir, f'{column_name}_{start_year}_{end_year}.txt')
 
         # Create a new DataFrame with the two columns we want
         output_df = df[[id_name, column_name]].copy()
         
+        if not os.path.exists(output_csv):
         # Save to CSV with proper header
-        output_df.to_csv(output_csv, index=False)
+            output_df.to_csv(output_csv, index=False)
         
-        # Save to TXT with double newline separator to match the loading function
-        with open(output_txt, 'w', encoding='utf-8') as f:
-            # Use double newlines to match re.split(r'\n\s*\n', chunk) in _process_chunk
-            f.write('\n\n'.join(output_df[column_name].astype(str).tolist()))
+        # # Save to TXT with double newline separator to match the loading function
+        # with open(output_txt, 'w', encoding='utf-8') as f:
+        #     # Use double newlines to match re.split(r'\n\s*\n', chunk) in _process_chunk
+        #     f.write('\n\n'.join(output_df[column_name].astype(str).tolist()))
         
-        logger.info(f"Saved data to {output_csv} and {output_txt} with {len(output_df)} documents")
+        logger.info(f"Saved data to {output_csv} with {len(output_df)} documents")
