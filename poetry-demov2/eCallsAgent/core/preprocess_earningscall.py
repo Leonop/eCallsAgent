@@ -1,0 +1,404 @@
+# Author: Zicheng Xiao
+# Date: 2024-09-01
+# Description: This script is used to preprocess the earnings call data.
+# The data is stored in the data folder, and the preprocessed data is stored in the docword folder.
+
+import codecs
+import json
+import re
+import os
+import string
+import pydantic
+import logging
+import sys
+import importlib
+import pandas as pd
+import warnings
+from datetime import datetime
+import multiprocessing
+from nltk.stem import WordNetLemmatizer
+from nltk.stem.porter import PorterStemmer
+from nltk.stem.snowball import SnowballStemmer
+from nltk.corpus import wordnet
+from tqdm import tqdm
+import numpy as np
+import nltk
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Ignore warnings
+warnings.filterwarnings("ignore")
+
+# Import global options
+from eCallsAgent.config import global_options as gl
+
+# Global variables for NLP models
+_nlp = None
+
+def get_nlp():
+    """Get or initialize spaCy model."""
+    global _nlp
+    if _nlp is None:
+        try:
+            import spacy
+            _nlp = spacy.load("en_core_web_sm", disable=["ner", "parser"])
+            logger.info(f"Successfully loaded spaCy model version: {spacy.__version__}")
+        except Exception as e:
+            logger.error(f"Error loading spaCy model: {e}")
+            _nlp = None
+    return _nlp
+
+class NlpPreProcess(object):
+    """
+    Natural Language Processing class for preprocessing earnings call data.
+    
+    This class provides methods for text preprocessing, including:
+    - Stopword removal
+    - Lemmatization
+    - Punctuation and digit removal
+    - Sentence filtering
+    
+    It supports multiple stemming algorithms:
+    - Porter Stemmer: A popular stemming algorithm that removes common morphological and inflectional endings from words.
+    - Snowball Stemmer: An improvement over the Porter Stemmer, also known as Porter2, which is more accurate and handles more edge cases.
+    - Lancaster Stemmer: Another popular stemming algorithm that is known for its aggressive approach to stemming.
+    - WordNet Lemmatizer: Uses a dictionary of known word forms to convert words to their base forms.
+    """
+    def __init__(self):
+        super(NlpPreProcess, self).__init__()
+        self.wnl = WordNetLemmatizer()  # Lemmatization
+        self.ps = PorterStemmer()  # Stemming
+        self.sb = SnowballStemmer('english')  # Stemming
+        self.stoplist = list(set([word.strip().lower() for word in gl.stop_list]))
+        
+        # Initialize NLP models
+        self.nlp = get_nlp()
+        
+    def remove_stopwords_from_sentences(self, text):
+        '''Split text by sentence, remove stopwords in each sentence, and rejoin sentences into one string'''
+        if not text or not isinstance(text, str):
+            return ""
+            
+        # Split text into sentences
+        if self.nlp is not None:
+            try:
+                doc = self.nlp(text)
+                # Process each sentence by removing stop words
+                processed_sentences = []
+                for sent in doc.sents:
+                    processed_sentence = ' '.join([token.text for token in sent if token.text.lower() not in self.stoplist])
+                    processed_sentences.append(processed_sentence)
+                # Rejoin all processed sentences into a single string
+                return ' '.join(processed_sentences)
+            except Exception as e:
+                logger.error(f"Error in spaCy processing: {e}")
+                # Fall back to simple processing
+        
+        # Fallback: simple sentence splitting and stopword removal
+        sentences = re.split(r'[.!?]+', text)
+        processed_sentences = []
+        for sentence in sentences:
+            words = sentence.split()
+            processed_sentence = ' '.join([word for word in words if word.lower() not in self.stoplist])
+            processed_sentences.append(processed_sentence)
+        return ' '.join(processed_sentences)
+    
+    def lemmatization(self, text, allowed_postags=['NOUN', 'ADJ', 'VERB']):
+        '''Lemmatize and filter tokens by part-of-speech'''
+        if self.nlp is None:
+            # Fallback to simple word splitting if spaCy is not available
+            return text.split()
+            
+        texts_out = []
+        doc = self.nlp(text)        
+        # Filter allowed POS tags and lemmatize
+        texts_out.append([token.lemma_ for token in doc if token.pos_ in allowed_postags])
+        return texts_out[0]  # Return flat list of lemmatized tokens
+    
+    def split_text_into_sentences(self, text):
+        if self.nlp is None:
+            return re.split(r'[.!?]+', text)
+        else:
+            doc = self.nlp(text)
+            return [sent.text for sent in doc.sents]
+
+    def lemmatize_texts(self, texts):
+        """Lemmatize a batch of texts for better performance."""
+        if self.nlp is None:
+            # Fallback to simple word splitting if spaCy is not available
+            return [text.split() for text in texts]
+            
+        lemmatized_texts = []
+        for doc in self.nlp.pipe(texts, batch_size=50, disable=["ner", "parser"]):
+            lemmatized_texts.append([token.lemma_ for token in doc if token.pos_ in ['NOUN', 'ADJ', 'VERB']])
+        return lemmatized_texts
+
+    def remove_stopwords(self, tokens):
+        '''Remove stopwords from tokenized words'''
+        # Ensure stopwords and tokens are all lowercase and stripped of spaces
+        self.stoplist = {word.strip().lower() for word in self.stoplist}  # Normalize stoplist
+        return [word for word in tokens if isinstance(word, str) and word.lower() not in self.stoplist]
+
+    def remove_punct_and_digits(self, text):
+        '''Remove punctuation and digits using regular expressions'''
+        text = re.sub(r'[{}]'.format(string.punctuation), ' ', text)  # Remove punctuation
+        text = re.sub(r'\s+', ' ', text)  # Replace multiple spaces with a single space
+        text = re.sub(r'\d+', '', text)  # Remove digits
+        return text.strip()  # Trim any leading/trailing spaces
+    
+    def remove_repeated_tokens(self, tokens):
+        """
+        Removes all duplicate tokens while preserving order.
+        ['great', 'great', 'momentum'] → ['great', 'momentum']
+        """
+        seen = set()
+        output = []
+        for tok in tokens:
+            if tok not in seen:
+                seen.add(tok)
+                output.append(tok)
+        return output
+
+    def final_text_filter(self, text):
+        """
+        Final text filtering to remove unwanted patterns and clean up text.
+        remove duplicated words (e.g. "good good"), excessive words, digits, and isolated characters
+        Args:
+            text (str): Input text to filter
+            
+        Returns:
+            str: Cleaned text
+        """
+        if not isinstance(text, str):
+            return ""
+            
+        # Remove excessive whitespace
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        # Remove any remaining digits or isolated characters
+        text = re.sub(r'\b\d+\b', '', text)
+        text = re.sub(r'\b[a-zA-Z]\b', '', text)
+        
+        # Remove any empty parentheses or brackets
+        text = re.sub(r'\(\s*\)', '', text)
+        text = re.sub(r'\[\s*\]', '', text)
+        
+        # Remove duplicated words
+        words = text.split()
+        deduped_words = []
+        for i, word in enumerate(words):
+            if i == 0 or word != words[i-1]:
+                deduped_words.append(word)
+        text = ' '.join(deduped_words)
+        
+        # Final whitespace cleanup
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        return text
+
+    def preprocess_file(self, df, col):
+        """
+        Preprocess a DataFrame column by:
+        1. Converting to string and deduplicating,
+        2. Removing punctuation and digits,
+        3. Tokenizing the text,
+        4. Removing stopwords,
+        5. Lemmatizing the tokens,
+        6. Rejoining tokens into a final string.
+        
+        Parameters:
+        df (pd.DataFrame): DataFrame containing the text data.
+        col (str): Column name in df with the text to process.
+        
+        Returns:
+        pd.Series: The preprocessed text column.
+        """
+        start_time = datetime.now()
+
+        # Step 0: Convert column to string and drop duplicates
+        df[col] = df[col].astype(str)
+
+        # Enable tqdm for pandas apply functions
+        tqdm.pandas()
+
+        # Step 1: Remove punctuation/digits from raw text
+        df[col] = df[col].progress_apply(self.remove_punct_and_digits)
+        logger.info(f"[Step 1] Punctuation/Digits removed in {datetime.now() - start_time}")
+        logger.info(df.head())
+
+        # Step 2: Tokenize text
+        if self.nlp:
+            tokenize_func = lambda text: [token.text for token in self.nlp(text) if not token.is_space]
+        else:
+            tokenize_func = lambda text: text.split()
+        df[col] = df[col].progress_apply(tokenize_func)
+        logger.info(f"[Step 2] Tokenization completed in {datetime.now() - start_time}")
+        logger.info(df.head())
+
+        # Step 3: Remove repeated tokens BEFORE stopword removal and lemmatization
+        df[col] = df[col].progress_apply(lambda x: self.remove_repeated_tokens(x) if isinstance(x, list) else x)
+        logger.info(f"[Step 3] Removed repeated tokens in {datetime.now() - start_time}")
+
+        # Step 4: Remove stopwords using a helper function (assumes input is a list)
+        df[col] = df[col].progress_apply(lambda tokens: self.remove_stopwords(tokens) if isinstance(tokens, list) else tokens)
+        logger.info(f"[Step 4] Stopword removal completed in {datetime.now() - start_time}")
+        logger.info(df.head())
+
+        # Step 5: Lemmatize tokens
+        df[col] = df[col].progress_apply(
+            lambda tokens: self.lemmatization(' '.join(tokens)) if isinstance(tokens, list) else self.lemmatization(tokens)
+        )
+        logger.info(f"[Step 5] Lemmatization completed in {datetime.now() - start_time}")
+        logger.info(df.head())
+
+        # Step 6: Rejoin tokens into a single string
+        df[col] = df[col].progress_apply(lambda tokens: ' '.join(tokens) if isinstance(tokens, list) else str(tokens))
+        logger.info(f"[Step 6] Rejoining tokens completed in {datetime.now() - start_time}")
+        logger.info(df.head())
+
+        # Final text filtering
+        df[col] = df[col].apply(self.final_text_filter)
+        logger.info(f"[Final] Text filter applied after rejoining")
+
+        # Remove duplicates
+        df = df.drop_duplicates(subset=col).reset_index(drop=True)
+        logger.info(f"[Deduplication] Completed in {datetime.now() - start_time}")
+        logger.info(f"[Processing Completed] Total time: {datetime.now() - start_time}")
+
+        return df
+
+    def remove_unnecessary_sentence(self, text):
+        """Remove unnecessary sentences from the text."""
+        if not isinstance(text, str):
+            return ""
+        text = text.split("|||")
+        # find the first index of "operator"
+        f_index = 0
+        try:
+            f_index = text.index("Operator")
+        except:
+            f_index=0
+        # remove the sentence before the f_index
+        text = text[f_index+1:]
+        # check if text is empty
+        if len(text) == 0:
+            return ""
+        # make sure there are at least 3 word in a sentence
+        text = [sentence for sentence in text if len(re.split(r'\s+', str(sentence))) >= 3]
+        return text
+    
+    def remove_snippet(self, list_sentences):
+        """
+        This function removes "safe harbor" snippets from transcript sentences. Specifically, it checks the number of safe
+        harbor keywords in a given snippet and a specific criteria, then removes any that matches such criteria.
+        
+        Arguments:
+            - list_sentences: A list of sentences to search for "safe harbor" snippets.
+
+        Return:
+            - text: A list of the original transcript sentences, excluding any identified "safe harbor" snippets.
+        """
+        # Given safe harbor keywords to search for in each snippet
+        safe_harbor_keywords = {
+            'safe', 
+            'harbor', 
+            'forwardlooking',
+            'forward-looking',
+            'forward', 
+            'looking',
+            'actual',
+            'statements', 
+            'statement',
+            'risk', 
+            'risks', 
+            'uncertainty',
+            'uncertainties',
+            'future',
+            'events', 
+            'sec',
+            'results'
+        }
+        
+        # Initialize the text list
+        text = []
+        
+        # Iterate over the list of sentences
+        list_sentences = [s for s in list_sentences if s]
+        for idx, snippet in enumerate(list_sentences):
+            # Split the snippet into words and count the number of safe harbor keywords it contains
+            num_keywords = sum(word.lower() in safe_harbor_keywords for word in snippet.split())
+            # Remove the snippet if it has more than two safe harbor keywords or less than 2 with forward-looking or forwardlooking 
+            # in its content
+            if not ((num_keywords > 2) or (('forward-looking' in snippet.lower()) or ('forward looking' in snippet.lower()))):
+                text.append(snippet)
+        return text
+
+    def save_sentences_as_lines(self, df: pd.DataFrame, column_name: str, output_path: str):
+        """
+        Save documents as lines, splitting if they exceed 512 words while preserving sentence boundaries.
+        
+        Args:
+            df: DataFrame containing the text data
+            column_name: Name of the column containing text
+            output_path: Path to save the output file
+        """
+        # Ensure output directory exists
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        
+        # Create a list to store processed documents
+        processed_docs = []
+        
+        # Process each document
+        for doc in tqdm(df[column_name].astype(str), desc="Processing documents"):
+            if not doc or doc.isspace():
+                continue
+            
+            # Use NLTK for sentence detection
+            sentences = nltk.sent_tokenize(doc)
+            
+            # Initialize variables for document chunking
+            current_chunk = []
+            current_word_count = 0
+            
+            for sent in sentences:
+                # Clean sentence
+                clean_sent = re.sub(r'\s+', ' ', sent).strip()
+                if not clean_sent:
+                    continue
+                    
+                # Count words in current sentence
+                sent_word_count = len(clean_sent.split())
+                
+                # If adding this sentence would exceed 512 words
+                if current_word_count + sent_word_count > 512:
+                    # Save current chunk if it exists
+                    if current_chunk:
+                        processed_docs.append(' '.join(current_chunk))
+                    # Start new chunk with current sentence
+                    current_chunk = [clean_sent]
+                    current_word_count = sent_word_count
+                else:
+                    # Add sentence to current chunk
+                    current_chunk.append(clean_sent)
+                    current_word_count += sent_word_count
+            
+            # Add any remaining chunk
+            if current_chunk:
+                processed_docs.append(' '.join(current_chunk))
+        
+        # Write processed documents to file, one per line
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write('\|\|\|\n'.join(processed_docs))
+        
+        logger.info(f"Saved {len(processed_docs)} document chunks to {output_path}")
+        # Log distribution of chunk sizes
+        word_counts = [len(doc.split()) for doc in processed_docs]
+        logger.info(f"Average words per chunk: {sum(word_counts)/len(word_counts):.1f}")
+        logger.info(f"Max words in a chunk: {max(word_counts)}")
+        
+        return processed_docs
+
+# if __name__ == '__main__':
+#     preprocess_file()

@@ -42,6 +42,26 @@ if not torch.cuda.is_available():
 print('CUDA available:', torch.cuda.get_device_name(0))
 "
 
+# Before installing cupy-cuda11x, uninstall any existing CuPy installations
+echo "Uninstalling any existing CuPy packages..."
+$PIP_CMD uninstall -y cupy cupy-cuda11x || echo "No CuPy packages to uninstall"
+conda uninstall -y cupy || echo "No CuPy conda package to uninstall"
+
+# Then install only cupy-cuda11x
+echo "Installing cupy-cuda11x..."
+$PIP_CMD install --no-cache-dir cupy-cuda11x==13.4.1
+
+# 11. Install RAPIDS components using conda rather than pip
+echo "Installing RAPIDS components using conda..."
+# Make sure this conda install comes BEFORE any pip installs that might pull in cupy
+conda install -c rapidsai -c conda-forge -c nvidia \
+    cudf=23.8 \
+    cuml=23.8 \
+    dask-cuda=23.8 \
+    dask-cudf=23.8 \
+    cudatoolkit=11.7 \
+    cupy
+
 # Set Python path and run main script
 export PYTHONPATH="/scrfs/storage/zichengx/home/Research/AIphaBiz:${PYTHONPATH}"
 cd /scrfs/storage/zichengx/home/Research/AIphaBiz/poetry-demo
